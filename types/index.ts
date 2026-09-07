@@ -7,15 +7,19 @@ export interface SearchResult {
 }
 
 export interface SearchResponseRvtDocsCom {
-  current_version_results?: Array<{
-    id?: string;
-    title?: string;
-    description?: string;
-    namespace?: string;
+  results?: Array<{
+    page_id?: string;
     year_version?: string;
+    title?: string;
     type?: string;
+    namespace?: string;
+    headline_main?: string;
+    declaring_type?: string;
+    description?: string;
+    is_obsolete?: boolean;
     url?: string;
   }>;
+  total?: number;
 }
 
 export interface SearchResponseRevirApiDocsCom {

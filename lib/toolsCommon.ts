@@ -64,8 +64,8 @@ export const toolValidators = {
   urlSlug: z
     .string()
     .describe("URL slug of the Revit API documentation page to retrieve"),
-  year: z.number().min(2023).max(2026).default(2025)
-    .describe("Revit API documentation year version (2023-2026)"),
+  year: z.number().min(2020).max(2027).default(2025)
+    .describe("Revit API documentation year version (2020-2027)"),
   maxResults: z.number().min(1).max(50).optional().default(10)
     .describe("Maximum number of search results to return"),
   queryTypes: z.array(z.enum(SearchResultTypes)).optional().default([

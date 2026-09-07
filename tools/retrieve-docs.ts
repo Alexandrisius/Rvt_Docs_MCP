@@ -26,12 +26,26 @@ export function createRetrieveDocs(server: McpServer) {
       },
     },
     async ({ queryString, queryTypes, year, maxResults }) => {
-      const searches = await searchWrapper(
-        queryString,
-        year,
-        maxResults,
-        queryTypes,
-      );
+      let searches;
+      try {
+        searches = await searchWrapper(
+          queryString,
+          year,
+          maxResults,
+          queryTypes,
+        );
+      } catch (error) {
+        const errorMessage = error instanceof Error
+          ? error.message
+          : "Unknown error occurred";
+        return {
+          content: [{
+            type: "text",
+            text: `Error searching Revit API documentation: ${errorMessage}`,
+          }],
+        };
+      }
+
       const results = [];
       for (const s of searches) {
         const fullUrl = s.url.startsWith("/")
@@ -40,18 +54,21 @@ export function createRetrieveDocs(server: McpServer) {
 
         try {
           results.push({
+            url: fullUrl,
             text: await extractRvtDocsText(fullUrl),
           });
         } catch (error) {
+          // One unreachable page must not discard the pages already
+          // retrieved: report the failure inline and keep going.
           const errorMessage = error instanceof Error
             ? error.message
             : "Unknown error occurred";
-          return {
-            content: [{
-              type: "text",
-              text: `Error searching Revit API documentation: ${errorMessage}`,
-            }],
-          };
+          console.error(`Warning: failed to extract ${fullUrl}:`, error);
+          results.push({
+            url: fullUrl,
+            text:
+              `Error extracting documentation from ${fullUrl}: ${errorMessage}`,
+          });
         }
       }
       return {

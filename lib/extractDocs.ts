@@ -6,10 +6,29 @@ type TextNode = DefaultTreeAdapterMap["textNode"];
 type CommentNode = DefaultTreeAdapterMap["commentNode"];
 
 /**
- * Extracts Revit API documentation from HTML and converts it to markdown
+ * Section labels that hold community content rather than API reference data.
+ * They are skipped to keep the output deterministic and compact.
+ */
+const SKIPPED_SECTION_LABELS = ["Discussion", "Community Snippets", "Examples"];
+
+/**
+ * Card classes that hold community content (discussion / snippet cards).
+ */
+const SKIPPED_CARD_CLASSES = ["cmt-card", "snip-doc-card"];
+
+/**
+ * Extracts Revit API documentation from rvtdocs.com HTML and converts it to
+ * markdown. Anchors on stable card classes (headline-card, params-card,
+ * exceptions-card, member-section-card, ...) instead of template comments so
+ * minor template rewording does not break extraction.
  */
 export async function extractRvtDocsText(url: string): Promise<string> {
   const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(
+      `Page request failed: ${response.status} ${response.statusText}`,
+    );
+  }
   const html = await response.text();
   const doc = parse(html);
 
@@ -19,47 +38,40 @@ export async function extractRvtDocsText(url: string): Promise<string> {
   );
   if (!htmlElement) throw new Error("HTML element not found");
 
-  const mainContent = findElementAfterComment(
-    htmlElement,
-    " Main content and footer ",
-  );
-  if (!mainContent) throw new Error("Main content section not found");
+  // Scope to the main content area when the template comment is present.
+  const mainContent =
+    findElementAfterComment(htmlElement, "Main content") ?? htmlElement;
 
-  let markdown = "";
+  const headline = find(mainContent, (el) => hasClass(el, "headline-card"));
+  if (!headline) throw new Error("Main content section not found");
 
-  // Extract left column content
-  const leftColumn = findElementAfterComment(
+  let markdown = extractHeadline(headline);
+
+  // Labeled reference sections: Syntax, Parameters, Exceptions, Methods, ...
+  const renderedTables = new Set<Element>();
+  const labels = findAll(
     mainContent,
-    " Left Column: Namespace, Title, Description, Remarks ",
+    (el) => hasClass(el, "card-toolbar-label"),
   );
-  if (leftColumn) {
-    markdown += extractLeftColumn(leftColumn);
+  for (const labelEl of labels) {
+    const label = cleanText(getText(labelEl)).replace(
+      /\s*\(\d+\s+members?\)/i,
+      "",
+    );
+    if (!label || SKIPPED_SECTION_LABELS.includes(label)) continue;
+
+    const card = findParent(labelEl, (el) => hasClass(el, "card"));
+    if (!card) continue;
+    if (SKIPPED_CARD_CLASSES.some((cls) => hasClass(card, cls))) continue;
+
+    markdown += extractSection(label, card, renderedTables);
   }
 
-  // Extract hierarchy
-  const rightColumn = findElementAfterComment(
-    mainContent,
-    " Right Column: Hierarchy - Only show div if hierarchy exists ",
-  );
-  if (rightColumn) {
-    const hierarchyHtml = extractHtmlContent(rightColumn);
-    if (hierarchyHtml.trim()) {
-      markdown += `## Hierarchy\n\n${htmlToMarkdown(hierarchyHtml)}\n\n`;
-    }
-  }
-
-  // Extract syntax sections
-  const syntaxSections = findAll(
-    mainContent,
-    (el) => hasClass(el, "card-title") && getText(el).includes("Syntax"),
-  );
-  for (const section of syntaxSections) {
-    markdown += extractSyntax(section);
-  }
-
-  // Extract tables
+  // Tables that live outside labeled sections.
   const tables = findAll(mainContent, (el) => el.nodeName === "table");
   for (const table of tables) {
+    if (renderedTables.has(table)) continue;
+    renderedTables.add(table);
     const tableMarkdown = extractTable(table);
     if (tableMarkdown.trim()) {
       markdown += `\n${tableMarkdown}`;
@@ -67,6 +79,193 @@ export async function extractRvtDocsText(url: string): Promise<string> {
   }
 
   return markdown.replace(/\n{3,}/g, "\n\n").trim();
+}
+
+/**
+ * Extracts namespace, title, type, description, remarks and inheritance
+ * hierarchy from the headline card.
+ */
+function extractHeadline(headline: Element): string {
+  let markdown = "";
+
+  const breadcrumb = find(headline, (el) => hasClass(el, "card-breadcrumb"));
+  if (breadcrumb) {
+    const links = findAll(breadcrumb, (el) => hasClass(el, "crumb-link"))
+      .map((el) => cleanText(getText(el)))
+      .filter((text) => text !== "");
+    if (links.length > 0) {
+      markdown += `**Namespace:** ${links[0]}\n\n`;
+    }
+    if (links.length > 1) {
+      markdown += `**Declaring Type:** ${links.slice(1).join(".")}\n\n`;
+    }
+  }
+
+  const titleCard = find(headline, (el) => hasClass(el, "card-title"));
+  if (titleCard) {
+    const h1 = find(titleCard, (el) => el.nodeName === "h1");
+    if (h1) {
+      markdown += `# ${cleanText(getText(h1))}\n\n`;
+    }
+  }
+
+  const pageType = find(headline, (el) => hasClass(el, "crumb-pagetype"));
+  if (pageType) {
+    const type = cleanText(getText(pageType));
+    if (type) {
+      markdown += `**Type:** ${type}\n\n`;
+    }
+  }
+
+  const description = find(headline, (el) => hasClass(el, "card-description"));
+  if (description) {
+    const html = extractHtmlContent(description)
+      .replace(/<strong>Description:<\/strong>/i, "")
+      .trim();
+    if (html) {
+      markdown += `## Description\n\n${htmlToMarkdown(html)}\n\n`;
+    }
+  }
+
+  const remarks = find(headline, (el) => hasClass(el, "card-remarks"));
+  if (remarks) {
+    const html = extractHtmlContent(remarks)
+      .replace(/<strong>Remarks:<\/strong>/i, "")
+      .trim();
+    if (html) {
+      markdown += `## Remarks\n\n${htmlToMarkdown(html)}\n\n`;
+    }
+  }
+
+  const hierarchy = find(headline, (el) => hasClass(el, "card-hierarchy"));
+  if (hierarchy) {
+    markdown += extractHierarchy(hierarchy);
+  }
+
+  return markdown;
+}
+
+/**
+ * Renders the hierarchy card as a markdown section. On class pages it holds
+ * the inheritance tree, on member pages an overloads list; tree glyphs that
+ * end up on their own line are merged with the entry that follows.
+ */
+function extractHierarchy(hierarchy: Element): string {
+  const raw = nodeToText(hierarchy);
+  let label = "Hierarchy";
+  let body = raw.replace(/Inheritance Hierarchy:\s*/i, "").trim();
+
+  const overloadsMatch = body.match(/^Overloads\s*(\(\d+\))?\s*:?\s*/i);
+  if (overloadsMatch) {
+    label = "Overloads";
+    body = body.slice(overloadsMatch[0].length);
+  }
+
+  const lines = body
+    .split("\n")
+    .map((line) => line.replace(/\s+/g, " ").trim())
+    .filter((line) => line !== "");
+
+  const merged: string[] = [];
+  let pendingGlyph = "";
+  for (const line of lines) {
+    if (/^[└├│─\s]+$/.test(line)) {
+      pendingGlyph += line.trim();
+      continue;
+    }
+    merged.push(pendingGlyph ? `${pendingGlyph} ${line}` : line);
+    pendingGlyph = "";
+  }
+  if (pendingGlyph) merged.push(pendingGlyph);
+
+  if (merged.length === 0) return "";
+  return `## ${label}\n\n${merged.join("\n")}\n\n`;
+}
+
+/**
+ * Renders one labeled section card (Syntax, Parameters, Exceptions, member
+ * listings, ...) as markdown based on the content it holds.
+ */
+function extractSection(
+  label: string,
+  card: Element,
+  renderedTables: Set<Element>,
+): string {
+  // Syntax: visible code snippets (active language tab, usually C#).
+  const snippets = findAll(
+    card,
+    (el) => hasClass(el, "code-snippet") && !hasClass(el, "hidden"),
+  );
+  if (snippets.length > 0) {
+    let markdown = `## ${label}\n\n`;
+    let added = false;
+    for (const snippet of snippets) {
+      const codeElement = find(snippet, (el) => el.nodeName === "code");
+      if (!codeElement) continue;
+      const code = cleanCode(getText(codeElement));
+      if (!code) continue;
+      const codeClass = getAttr(codeElement, "class") || "";
+      const language = codeClass.includes("vb")
+        ? "vbnet"
+        : codeClass.includes("cpp")
+        ? "cpp"
+        : codeClass.includes("fs")
+        ? "fsharp"
+        : "csharp";
+      markdown += `\`\`\`${language}\n${code}\n\`\`\`\n\n`;
+      added = true;
+    }
+    if (added) return markdown;
+  }
+
+  // Parameters and return value.
+  const paramRows = findAll(card, (el) => hasClass(el, "param-row"));
+  if (paramRows.length > 0) {
+    let markdown = `## ${label}\n\n| Type | Name | Description |\n|---|---|---|\n`;
+    for (const row of paramRows) {
+      const type = cleanText(getTextCell(row, "param-type"));
+      const name = cleanText(getTextCell(row, "param-name"));
+      const description = cleanText(getTextCell(row, "param-desc"));
+      markdown += `| \`${type}\` | \`${name}\` | ${description} |\n`;
+    }
+    const returnRow = find(card, (el) => hasClass(el, "return-row"));
+    if (returnRow) {
+      const type = cleanText(getTextCell(returnRow, "return-type"));
+      const description = cleanText(getTextCell(returnRow, "return-desc"));
+      markdown +=
+        `\n**Return Value:** \`${type}\`${description ? ` — ${description}` : ""}\n`;
+    }
+    return `${markdown}\n`;
+  }
+
+  // Exceptions.
+  const exceptionRows = findAll(card, (el) => hasClass(el, "exc-row"));
+  if (exceptionRows.length > 0) {
+    let markdown = `## ${label}\n\n| Exception | Condition |\n|---|---|\n`;
+    for (const row of exceptionRows) {
+      const name = cleanText(getTextCell(row, "exc-name"));
+      const description = cleanText(getTextCell(row, "exc-desc"));
+      markdown += `| \`${name}\` | ${description} |\n`;
+    }
+    return `${markdown}\n`;
+  }
+
+  // Member listings and other table-based sections.
+  const tables = findAll(card, (el) => el.nodeName === "table");
+  if (tables.length > 0) {
+    let markdown = `## ${label}\n\n`;
+    for (const table of tables) {
+      renderedTables.add(table);
+      markdown += `${extractTable(table)}\n`;
+    }
+    return markdown;
+  }
+
+  // Fallback: plain text of the section without the toolbar label.
+  const text = cleanText(nodeToText(card))
+    .replace(new RegExp(`^${label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`), "")
+    .trim();
+  return text ? `## ${label}\n\n${text}\n\n` : "";
 }
 
 function findElementAfterComment(
@@ -96,87 +295,6 @@ function findElementAfterComment(
     }
   }
   return null;
-}
-
-function extractLeftColumn(element: Element): string {
-  let markdown = "";
-
-  // Namespace
-  const namespace = find(element, (el) => hasClass(el, "card-namespace"));
-  if (namespace) {
-    const text = cleanText(getText(namespace));
-    if (text.includes("Namespace:")) {
-      markdown += `**Namespace:** ${text.replace("Namespace:", "").trim()}\n\n`;
-    }
-  }
-
-  // Title
-  const titleCard = find(element, (el) => hasClass(el, "card-title"));
-  if (titleCard) {
-    const h1 = find(titleCard, (el) => el.nodeName === "h1");
-    if (h1) {
-      markdown += `# ${cleanText(getText(h1))}\n\n`;
-    }
-
-    const typeBadge = find(titleCard, (el) => hasClass(el, "bg-gray-200"));
-    if (typeBadge) {
-      markdown += `**Type:** ${cleanText(getText(typeBadge))}\n\n`;
-    }
-  }
-
-  // Description
-  const description = find(element, (el) => hasClass(el, "card-description"));
-  if (description) {
-    const html = extractHtmlContent(description).replace(
-      "<strong>Description:</strong>",
-      "",
-    ).trim();
-    if (html) {
-      markdown += `## Description\n\n${htmlToMarkdown(html)}\n\n`;
-    }
-  }
-
-  // Remarks
-  const remarks = find(element, (el) => hasClass(el, "card-remarks"));
-  if (remarks) {
-    const html = extractHtmlContent(remarks).replace(
-      "<strong>Remarks:</strong>",
-      "",
-    ).trim();
-    if (html) {
-      markdown += `## Remarks\n\n${htmlToMarkdown(html)}\n\n`;
-    }
-  }
-
-  return markdown;
-}
-
-function extractSyntax(syntaxTitle: Element): string {
-  let markdown = "## Syntax\n\n";
-
-  const parentCard = findParent(syntaxTitle, (el) => hasClass(el, "card"));
-  if (parentCard) {
-    const codeSnippets = findAll(
-      parentCard,
-      (el) => hasClass(el, "code-snippet"),
-    );
-    for (const snippet of codeSnippets) {
-      const codeElement = find(snippet, (el) => el.nodeName === "code");
-      if (codeElement) {
-        const code = cleanText(getText(codeElement));
-        if (code) {
-          const codeClass = getAttr(codeElement, "class") || "";
-          const language = codeClass.includes("vbnet")
-            ? "vbnet"
-            : codeClass.includes("cpp")
-            ? "cpp"
-            : "csharp";
-          markdown += `\`\`\`${language}\n${code}\n\`\`\`\n\n`;
-        }
-      }
-    }
-  }
-  return markdown;
 }
 
 function extractTable(table: Element): string {
@@ -278,10 +396,15 @@ function findParent(
   return null;
 }
 
+/**
+ * Token-based class match: "code-snippet" must not match
+ * "example-code-snippet" and "card-toolbar" must not match "card-toolbar-h".
+ */
 function hasClass(element: Element, className: string): boolean {
-  return element.attrs?.some((attr) =>
-    attr.name === "class" && attr.value.includes(className)
-  ) ?? false;
+  const classAttr = element.attrs?.find((attr) => attr.name === "class")
+    ?.value;
+  if (!classAttr) return false;
+  return classAttr.split(/\s+/).includes(className);
 }
 
 function getAttr(element: Element, name: string): string | undefined {
@@ -298,8 +421,45 @@ function getText(node: ChildNode): string {
   return "";
 }
 
+/**
+ * Text content with <br> preserved as line breaks.
+ */
+function nodeToText(node: ChildNode): string {
+  if (node.nodeName === "#text") {
+    return (node as TextNode).value;
+  }
+  if (node.nodeName === "br") {
+    return "\n";
+  }
+  if ("childNodes" in node) {
+    return node.childNodes.map(nodeToText).join("");
+  }
+  return "";
+}
+
+/**
+ * Text of the first descendant carrying the given class token.
+ */
+function getTextCell(row: Element, className: string): string {
+  const cell = find(row, (el) => hasClass(el, className));
+  return cell ? getText(cell) : "";
+}
+
 function cleanText(text: string): string {
   return text.replace(/\s+/g, " ").trim();
+}
+
+/**
+ * Normalizes code block text without collapsing line breaks.
+ */
+function cleanCode(code: string): string {
+  return code
+    .replace(/\r\n/g, "\n")
+    .split("\n")
+    .map((line) => line.replace(/\s+$/, ""))
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
 function extractHtmlContent(element: Element): string {

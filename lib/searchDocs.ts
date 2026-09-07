@@ -12,8 +12,36 @@ export async function searchWrapper(
   max: number,
   types: ReadonlyArray<(typeof SearchResultTypes)[number]> = SearchResultTypes,
 ): Promise<SearchResult[]> {
-  const results1 = await searchRvtDocsCom(query, year, max * 2, types);
-  const results2 = await searchRevitApiDocsCom(query, year, max * 2, types);
+  // Query both sources in parallel. A failure of one source degrades the
+  // result set but must not take down the whole search: only throw when
+  // every source failed.
+  const [rvtDocsResult, revitApiDocsResult] = await Promise.allSettled([
+    searchRvtDocsCom(query, year, max * 2, types),
+    searchRevitApiDocsCom(query, year, max * 2, types),
+  ]);
+
+  if (
+    rvtDocsResult.status === "rejected" && revitApiDocsResult.status === "rejected"
+  ) {
+    throw rvtDocsResult.reason;
+  }
+  if (rvtDocsResult.status === "rejected") {
+    console.error(
+      "Warning: rvtdocs.com search failed, returning revitapidocs.com results only:",
+      rvtDocsResult.reason,
+    );
+  }
+  if (revitApiDocsResult.status === "rejected") {
+    console.error(
+      "Warning: revitapidocs.com search failed, returning rvtdocs.com results only:",
+      revitApiDocsResult.reason,
+    );
+  }
+
+  const results1 = rvtDocsResult.status === "fulfilled" ? rvtDocsResult.value : [];
+  const results2 = revitApiDocsResult.status === "fulfilled"
+    ? revitApiDocsResult.value
+    : [];
 
   const allResults = [...results1, ...results2];
   const dedupedResults = dedupeByUrl(allResults);
@@ -59,7 +87,9 @@ function sortByType(results: SearchResult[]): SearchResult[] {
 }
 
 /**
- * Searches Revit API documentation using the rvtdocs.com search endpoint
+ * Searches Revit API documentation using the rvtdocs.com Search V2 API endpoint
+ * (GET /search/v2/api/). The `fields` parameter is required: without it the
+ * backend returns an empty result set.
  */
 export async function searchRvtDocsCom(
   query: string,
@@ -68,20 +98,17 @@ export async function searchRvtDocsCom(
   types: ReadonlyArray<(typeof SearchResultTypes)[number]> = SearchResultTypes,
 ): Promise<SearchResult[]> {
   try {
-    // Using the rvtdocs.com search API endpoint
-    const searchUrl = "https://rvtdocs.com/search/api/search";
-
-    const requestBody = {
-      query: query,
-      current_version: year.toString(),
-      include_description: false,
-    };
+    // Using the rvtdocs.com Search V2 API endpoint
+    const params = new URLSearchParams();
+    params.set("q", query);
+    params.set("v", year.toString());
+    params.set("fields", "title");
+    params.set("limit", maxResults.toString());
+    params.set("source", "mcp");
+    const searchUrl = `https://rvtdocs.com/search/v2/api/?${params.toString()}`;
 
     // Make the search request
-    const response = await fetch(searchUrl, {
-      method: "POST",
-      body: JSON.stringify(requestBody),
-    });
+    const response = await fetch(searchUrl);
 
     if (!response.ok) {
       throw new Error(
@@ -93,11 +120,8 @@ export async function searchRvtDocsCom(
     const results: SearchResult[] = [];
 
     // Parse the response based on the expected format
-    if (
-      data.current_version_results &&
-      Array.isArray(data.current_version_results)
-    ) {
-      for (const item of data.current_version_results.slice(0, maxResults)) {
+    if (data.results && Array.isArray(data.results)) {
+      for (const item of data.results.slice(0, maxResults)) {
         results.push({
           title: item.title || "",
           description: (item.description || "").replace(
