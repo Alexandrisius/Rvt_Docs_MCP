@@ -28,6 +28,10 @@
 >   syntax block. VB / C++ / F# tabs and the Discussion / Community Snippets cards are
 >   dropped on purpose to keep responses token-cheap. The official SDK `Examples` card
 >   is available on demand via `includeExamples: true` (off by default).
+> - **Fewer round trips** (`v1.0.8`): a member page with overloads returns every
+>   overload's C# signature in the same call, search results carry the declaring type of
+>   each member (plus an obsolete flag), and a 404 on an inherited member points at the
+>   type that actually declares it.
 > - **Resilience**: both search sources are queried with `Promise.allSettled`, so a
 >   dead source degrades the result set instead of failing the whole call; in
 >   `retrieve-docs` one unreachable page no longer discards pages already fetched.
@@ -82,12 +86,23 @@ documentation:
 
 - **`search-docs`** - Search Revit API documentation to find entities matching
   your query. Returns entity names, descriptions, namespaces, types, and URL
-  slugs for further exploration (but not the documentation itself).
+  slugs for further exploration (but not the documentation itself). A member
+  result also carries `declaringType` - the type that declares it, which is where
+  its page lives when the member is inherited - and `isObsolete` when the entity
+  is deprecated (the field is omitted otherwise). Results are deduplicated: both
+  documentation sites index the same entity, once under a readable slug and once
+  under a bare page id, and only the readable one (the one with a description) is
+  returned.
 
 - **`retrieve-doc`** - Retrieve a single Revit API documentation page using its
   URL slug. Use this after getting a URL slug from a search operation. Pass
   `includeExamples: true` to also get the page's official C# code example (about
-  half of all pages have one; it adds ~500-3,300 characters).
+  half of all pages have one; it adds ~500-3,300 characters). A member with
+  several overloads returns every overload's C# signature in the same call (an
+  `## Overload Signatures` section), so you do not have to fetch them one by one.
+  An inherited member has no page of its own - `LocationPoint.Rotate` does not
+  exist, `Location.Rotate` does - and such a 404 comes back with the slug of the
+  type that declares it, so the error is not a dead end.
 
 - **`retrieve-docs`** - Get full documentation content for multiple Revit API
   entities based on a search query. Useful when you need complete documentation

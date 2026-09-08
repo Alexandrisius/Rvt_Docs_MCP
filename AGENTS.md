@@ -15,7 +15,7 @@ access to **Revit API reference documentation**.
 It scrapes two documentation sites — `rvtdocs.com` and `revitapidocs.com` — and
 converts their HTML into compact, agent-friendly markdown: C# syntax only,
 Parameters / Exceptions / Return Value as tables, inheritance hierarchy, overload
-trees, member listings.
+trees **plus each overload's own C# signature**, member listings.
 
 **What it is NOT:**
 
@@ -56,7 +56,7 @@ raw HTML (~13x compression measured on `Autodesk.Revit.DB.Wall`).
 | Default branch | `master` (not `main`) |
 | Runtime | Deno 2.x (`deno --version` → 2.9.6 verified) |
 | Protocol | MCP over **stdio**, newline-delimited JSON-RPC |
-| `serverInfo` | name `revit-docs-mcp`, version `1.0.7` — hardcoded in `main.ts`, **bump it before every tag** (builds up to `v1.0.6` reported `1.0.0`, so clients could not tell them apart) |
+| `serverInfo` | name `revit-docs-mcp`, version `1.0.8` — hardcoded in `main.ts`, **bump it before every tag** (builds up to `v1.0.6` reported `1.0.0`, so clients could not tell them apart) |
 | Tools exposed | `search-docs`, `retrieve-doc`, `retrieve-docs` |
 | Tool gated | `search-library` — registered **only** if both `OPENAI_API_KEY` and `OPENAI_VECTOR_STORE_ID` are set (env or `-k` / `-v` flags) |
 | Doc sources | `rvtdocs.com` (primary, Search V2) + `revitapidocs.com` (secondary) |
@@ -71,12 +71,12 @@ raw HTML (~13x compression measured on `Autodesk.Revit.DB.Wall`).
 | Path | Responsibility | Care level |
 |---|---|---|
 | `main.ts` | CLI arg parsing (`-k`, `-v`, `-h`), env reading, tool registration, stdio transport | Medium — touches startup; remember stdout is the protocol channel (§5, I-07) |
-| `lib/toolsCommon.ts` | Shared zod schemas: `queryString`, `queryTypes`, `year` (2020–2027), `maxResults` (1–50, default 10), `includeExamples` (default false) | **High** — these descriptions are the only documentation an agent sees |
-| `lib/searchDocs.ts` | Both search sources, `Promise.allSettled`, dedupe by URL, sort by type, slice | **High** — contains the Search V2 endpoint and the mandatory `fields` param |
-| `lib/extractDocs.ts` | HTML → markdown. parse5 DOM walk, section cards, syntax, opt-in `Examples`, parameters, exceptions, hierarchy/overloads, `SKIPPED_SECTION_LABELS` + `EXAMPLES_SECTION_LABEL` | **Highest** — the most fragile file; breaks whenever the site re-templates |
+| `lib/toolsCommon.ts` | Shared zod schemas: `queryString`, `queryTypes`, `urlSlug` (its exact shape is spelled out in the `.describe()` text, and so is why the plural `queryTypes` values cannot enumerate a class's members), `year` (2020–2027), `maxResults` (1–50, default 10), `includeExamples` (default false) | **High** — these descriptions are the only documentation an agent sees |
+| `lib/searchDocs.ts` | Both search sources, `Promise.allSettled`, `dedupeByUrl` → `dedupePageIdTwins` (drops the bare page-id twin of a readable result; helpers `PAGE_ID_SLUG`, `memberNameOf`), `declaringType` / `isObsolete` passthrough, sort by type, slice | **High** — contains the Search V2 endpoint and the mandatory `fields` param |
+| `lib/extractDocs.ts` | HTML → markdown. parse5 DOM walk, section cards, syntax, opt-in `Examples`, parameters, exceptions, hierarchy/overloads, overload-signature expansion of stub pages (`isOverloadsStub`, `extractOverloadSignatures`, `fetchSyntaxBlock`, `MAX_OVERLOAD_PAGES`), inherited-member slug suggestion (`suggestInheritedMemberSlug`, `findInheritedFrom`), `SKIPPED_SECTION_LABELS` + `EXAMPLES_SECTION_LABEL` | **Highest** — the most fragile file; breaks whenever the site re-templates |
 | `lib/searchVectorLibrary.ts` | OpenAI vector-store search for `search-library` | Low (gated feature) |
-| `tools/*.ts` | One file per MCP tool: schema + handler wiring | Medium |
-| `types/index.ts` | Response shapes of both sites (`SearchResponseRvtDocsCom`, `SearchResponseRevirApiDocsCom`, `SearchResult`, `SearchResultTypes`) | **High** — must match live site responses |
+| `tools/*.ts` | One file per MCP tool: schema + handler wiring. `retrieve-doc.ts` also owns the 404 path — it appends the declaring type's slug via `suggestInheritedMemberSlug` | Medium |
+| `types/index.ts` | Response shapes of both sites (`SearchResponseRvtDocsCom`, `SearchResponseRevirApiDocsCom`, `SearchResult`, `SearchResultTypes`). `SearchResult` carries two optional fields: `declaringType` (the type that declares a member) and `isObsolete` (set **only** when true, so the common case has no extra noise) | **High** — must match live site responses |
 | `deno.json` | Tasks (`dev`, `compile`), imports (MCP SDK, openai, std/cli, std/dotenv, parse5, zod) | Medium |
 | `.github/workflows/deno.yml` | Matrix build (windows / macos-x64 / macos-arm64) + release | Medium — a tag push **publishes a public release** |
 | `README.md` | Public entry point: fork notice, features, tools, setup, opencode config | Keep accurate |
@@ -110,6 +110,12 @@ files. Breaking these silently breaks their agents.
   `includeExamples` is the reference implementation of this rule: the official C#
   example costs ~350-450 tokens and exists on ~50% of pages, so it defaults to `false`
   and the VB / AI-translated Python tabs of the same sample are never emitted.
+  **One bounded exception (`v1.0.8`):** an overloads *stub* page is enriched with each
+  overload's C# signature (`## Overload Signatures`) without the caller asking. It is
+  capped — `MAX_OVERLOAD_PAGES = 10` in `lib/extractDocs.ts`, unreachable overloads are
+  skipped, and anything beyond the cap is reported as a count instead of fetched — so
+  the worst case is ~1.5 kB. Rationale: it replaces N round trips (one per overload)
+  with a single call. Anything whose cost is larger or unbounded still has to be opt-in.
 - **I-06 — Partial failure must not fail the whole call.** Search sources are queried
   with `Promise.allSettled` and only throw when *every* source failed; `retrieve-docs`
   wraps each page in `try/catch` so one unreachable page does not discard the pages
@@ -127,7 +133,9 @@ files. Breaking these silently breaks their agents.
 - **I-10 — Do not push tags without an explicit instruction.** Any tag matching `v*`
   triggers CI and **publishes a public release**. Tags `v1.0.0`–`v1.0.5` already exist
   (inherited from upstream at fork time, no assets), `v1.0.6` fixed the Search V2
-  breakage and `v1.0.7` added `includeExamples`. Next version is `v1.0.8`.
+  breakage, `v1.0.7` added `includeExamples`, and `v1.0.8` carries the five usability
+  fixes that came out of a blind agent test (listed as done in §10) — `main.ts` already
+  reports `1.0.8`. Next version is `v1.0.9`.
 
 ## 6. Build, verify, release — exact commands
 
@@ -201,7 +209,41 @@ Also worth checking: `year: 2020` and `year: 2027` both return valid slugs, and 
 same slug called twice — once without the flag and once with `includeExamples: true` —
 returns **2425** and **2970** characters respectively, the second one containing a
 `## Examples` section with a single ```` ```csharp ```` block (no `vbnet`, no `python`).
-The flag must never change the default response.
+The flag must never change the default response. That pair is for the eight-parameter
+`Wall.Create` overload and was re-measured on the released `v1.0.8` CI artifact:
+**2425** and **2970**, unchanged from `v1.0.7`. A specific-overload page is not an
+overloads stub, so the `v1.0.8` enrichment cannot fire on it.
+
+**Behaviour baseline for `v1.0.8`** — measured 2026-09-08 on the local build, driven over
+MCP stdio with the client above. These are the checks the five usability fixes touched;
+re-run them after any change to `lib/extractDocs.ts` or `lib/searchDocs.ts`:
+
+- `search-docs "RotateElement"` → **3 results, zero page-id slugs, `declaringType` present
+  on all 3**. Before `dedupePageIdTwins` this returned 5 results, two of them bare page-id
+  duplicates with no description.
+- `search-docs "WallType"` with `queryTypes: ["Methods"]` → **1 result, type `Methods`,
+  page-id slug preserved**. It has no readable twin, and it is the only path to a class's
+  whole member-listing page — proof that the dedupe did not eat it.
+- `retrieve-doc /2025/Autodesk.Revit.DB.Transaction.Start` → **382 → 548 characters**, now
+  with `## Overload Signatures` containing `### Start()` and `### Start(String)` and the
+  real C# (`public TransactionStatus Start`).
+- `retrieve-doc /2025/Autodesk.Revit.DB.Wall.Create` (the stub, no parameter list) →
+  **2,357 characters with 5 overload signatures**.
+- `retrieve-doc /2025/Autodesk.Revit.DB.LocationPoint.Rotate` → error text ending with
+  **`Try: /2025/Autodesk.Revit.DB.Location.Rotate`**.
+- Regression, `retrieve-doc /2025/Autodesk.Revit.DB.ElementTransformUtils.RotateElement`
+  with `includeExamples: true` → **1,165 characters** with `## Examples` and the
+  `RotateColumn` sample.
+- Regression, the same slug **without** the flag → **827 characters** with `## Parameters`
+  and `## Exceptions` and **no** `## Examples`. The default response is untouched.
+- Regression, untouched page shapes: the class page `/2025/Autodesk.Revit.DB.Wall` →
+  **15,295 characters**; the eight-parameter `Wall.Create` overload → **2,425** default
+  and **2,970** with `includeExamples`.
+
+All of the above was re-run against the **released `v1.0.8` CI artifact**, not only the
+local build: the handshake reported `serverInfo.version` `1.0.8` and every number came
+back identical. Do the same for the next release — the two builds differ in size
+(97,471,888 local vs 97,471,264 CI) and only a re-run proves they behave alike.
 
 ### Verify inside a real client (opencode)
 
@@ -270,12 +312,13 @@ to be on `PATH` (the winget install does not create a shim).
 
 Bump the handshake version first — `McpServer({ name, version })` in `main.ts` must
 match the tag you are about to push (this is what lets a client tell builds apart), then
-rebuild and re-run the smoke client. The next version after `v1.0.7` is `v1.0.8`.
+rebuild and re-run the smoke client. `main.ts` currently reports `1.0.8`; the next version
+after `v1.0.8` is `v1.0.9`.
 
 ```bash
-git tag -a v1.0.8 -m "v1.0.8 - <what changed>"
+git tag -a v1.0.9 -m "v1.0.9 - <what changed>"
 git push origin master
-git push origin v1.0.8          # push the tag explicitly; --follow-tags would also work
+git push origin v1.0.9          # push the tag explicitly; --follow-tags would also work
 gh run list --repo Alexandrisius/Rvt_Docs_MCP --limit 3
 gh run watch <run-id> --repo Alexandrisius/Rvt_Docs_MCP --exit-status
 ```
@@ -283,14 +326,16 @@ gh run watch <run-id> --repo Alexandrisius/Rvt_Docs_MCP --exit-status
 CI builds all three targets (~1–2 min) and creates the release. **Two gotchas:**
 
 1. The release body is created **empty** by `softprops/action-gh-release`. Always fill
-   it in afterwards: `gh release edit v1.0.8 --notes-file notes.md`.
+   it in afterwards: `gh release edit v1.0.9 --notes-file notes.md`.
 2. **Re-verify the CI artifact**, do not trust the local build — compile environments
-   differ. Download the asset (`gh release download v1.0.8 --pattern
+   differ. Download the asset (`gh release download v1.0.9 --pattern
    "Rvt_Docs_MCP-windows.exe" --dir <tmp>`) and run the stdio smoke client above
-   against it. For `v1.0.6` the CI artifact answered byte-identically to the local
-   build (`RETRIEVE len: 2425`). For `v1.0.7` the CI asset (97,441,696 bytes) and the
-   local build (97,441,859 bytes) differ in size but answered identically:
-   `revit-docs-mcp v1.0.7`, baseline `2425`, `includeExamples: true` → `2970`.
+   against it, including the `v1.0.8` behaviour baseline. For `v1.0.6` the CI artifact
+   answered byte-identically to the local build (`RETRIEVE len: 2425`). For `v1.0.7` the
+   CI asset (97,441,696 bytes) and the local build (97,441,859 bytes) differ in size but
+   answered identically: `revit-docs-mcp v1.0.7`, baseline `2425`,
+   `includeExamples: true` → `2970`. The `v1.0.8` numbers were measured on the local
+   build only, so the CI asset of that release still has to be checked.
 
 ## 7. Failure modes and diagnostics
 
@@ -300,13 +345,17 @@ CI builds all three targets (~1–2 min) and creates the release. **Two gotchas:
 | HTTP 200 but **empty** result set | the mandatory `fields` parameter is missing/wrong | `params.set("fields", "title")` — without it the Search V2 backend returns nothing |
 | `Main content section not found` | page layout re-templated, the headline anchor no longer matches | `lib/extractDocs.ts` — it anchors on stable CSS classes, not HTML comments; re-inspect the markup and update the class names |
 | Sections silently missing (e.g. no Exceptions) | card class renamed, or the label landed in `SKIPPED_SECTION_LABELS` | `extractSection` + `SKIPPED_SECTION_LABELS` |
-| Results without descriptions | one source returns a thinner record; dedupe keeps the record with fewer empty fields | `dedupeByUrl` in `lib/searchDocs.ts`, shapes in `types/index.ts` |
+| Results without descriptions | a page-id result with **no** readable twin survives on purpose — it is the only way to reach a class's whole `Methods` / `Properties` listing page; otherwise one source returned a thinner record and `dedupeByUrl` keeps the record with fewer empty fields | `dedupePageIdTwins` + `dedupeByUrl` in `lib/searchDocs.ts`, shapes in `types/index.ts` |
+| The same entity twice in the results, one copy without a description | both sources index every entity — once under a readable slug, once under a bare page id (GUID). Since `v1.0.8` `dedupePageIdTwins` drops the page-id twin, but **only** when exactly one readable result of the same type carries the same member name; with several candidates (`Create` exists on dozens of classes) nothing is dropped, because guessing would delete real entities | `dedupePageIdTwins`, `PAGE_ID_SLUG`, `memberNameOf` in `lib/searchDocs.ts` |
+| An entity that *should* be in the results is missing | the page-id twin rule matched too eagerly and a real entity was mistaken for a duplicate of a readable one | `memberNameOf` (it strips an overload's parameter list and the type word the secondary source appends to its titles) and the `twins.length === 1` guard in `dedupePageIdTwins`; compare against what the two sources returned before the dedupe |
 | Only one source's results | the other source is down — by design (I-06), a warning goes to stderr | `searchWrapper` |
 | `search-library` missing | `OPENAI_API_KEY` / `OPENAI_VECTOR_STORE_ID` not both set | `main.ts` |
 | Client handshake fails / hangs | non-JSON on stdout (I-07), or the OS blocked an unsigned binary | run the smoke client and look at raw stdout; on Windows check "Unblock" in file properties |
 | Tools vanished mid-session, or a new parameter is silently ignored after a rebuild | the opencode service does not respawn a dead MCP child, and `opencode mcp list` still prints `✓ connected` because it spawns its own instance | toggle `enabled` false→true in `opencode.json` (see §6), or run `opencode2 service restart` — the latter kills every active session |
 | A specific `year` returns nothing | outside site coverage (2020–2027) | `lib/toolsCommon.ts` |
 | `retrieve-doc` on an overload fails | slug must be the exact string from search results, including the parenthesised parameter list | pass `url` from `search-docs` verbatim |
+| `retrieve-doc` on an inherited member → `404` | the member is declared on a base type: `LocationPoint.Rotate` has no page, `Location.Rotate` does. Since `v1.0.8` the error text ends with `This member is likely declared on a base type. Try: /2025/Autodesk.Revit.DB.Location.Rotate` | `suggestInheritedMemberSlug` + `findInheritedFrom` in `lib/extractDocs.ts`, called from the catch block of `tools/retrieve-doc.ts`. **Suggestion missing?** It is best effort: it fires only on a 404 for a `<Type>.<Member>` slug (no `(`, no hash) and needs the class page's `Inherited From` column, which the 2025+ docs have. **Suggestion wrong?** The cell is picked by header position — re-check `findInheritedFrom` against the live member table. Any failure returns null and the plain error is served unchanged |
+| An overloads stub page comes back without `## Overload Signatures` | the anchor matching no longer fits the markup: overload links are collected by `href` starting with the page's own path followed by `(` (parameterised) or `-` (hashed — a parameterless overload lives at e.g. `/2025/Autodesk.Revit.DB.Transaction.Start-1146fa87`, which cannot be derived from the member name) | `isOverloadsStub` (the breadcrumb's `crumb-pagetype` chip must read `Overloads`) and `extractOverloadSignatures` in `lib/extractDocs.ts`; re-inspect the anchors of a live stub page. Unreachable overloads are skipped instead of failing the call, and past `MAX_OVERLOAD_PAGES = 10` the section ends with a note about how many were not expanded |
 | `includeExamples: true` but no `## Examples` in the response | either the page genuinely has no example (~50% of pages do not), or the card was renamed | `extractSection` in `lib/extractDocs.ts` — it matches the label `Examples` and the class `example-code-snippet` (distinct from the Syntax card's `code-snippet`), plus `data-tab-index="C#-n"` to pick the C# tab |
 
 **If the site moved again:** reproduce with the smoke client, capture the failing raw
@@ -320,9 +369,14 @@ upstream.
 
 1. Query both sources in parallel with `Promise.allSettled`, each asking for `max * 2`
    results. Throw only if *both* rejected; otherwise warn on stderr and continue.
-2. rvtdocs.com: `GET https://rvtdocs.com/search/v2/api/?q=<query>&v=<year>&fields=title&limit=<n>&source=mcp`
+2. rvtdocs.com: `GET https://rvtdocs.com/search/v2/api/?q=<query>&v=<year>&fields=title&limit=<n>&source=mcp`.
+   The response's `declaring_type` and `is_obsolete` are passed through as `declaringType`
+   and `isObsolete` (the latter only when true) instead of being dropped.
 3. Concatenate → `dedupeByUrl` (keeps the record with fewer empty fields) →
-   `sortByType` (Class, Methods, Properties, Constructor first) → `slice(0, max)`.
+   `dedupePageIdTwins` (drops a bare page-id twin when **exactly one** readable result of
+   the same type carries the same member name; page-id results without a twin survive,
+   they are the only way to reach a class's member-listing page) → `sortByType` (Class,
+   Methods, Properties, Constructor first) → `slice(0, max)`.
 
 **Extraction (`lib/extractDocs.ts`, parse5)**
 
@@ -340,7 +394,23 @@ upstream.
 6. Exceptions table, member tables, then tables living outside labeled sections.
 7. The hierarchy card renders as `## Hierarchy` on class pages and as `## Overloads` +
    an overload list on member pages (detected by an `Overloads (n):` prefix regex).
-8. Collapse 3+ consecutive newlines and trim.
+8. **Overloads stub → signatures.** When the breadcrumb's page-type chip reads `Overloads`
+   (`isOverloadsStub`), the page is a stub: it lists the overloads but shows no
+   signatures. `extractOverloadSignatures` then collects the overload links from the
+   page's own anchors — an `href` starting with the page path plus `(` or `-`, because a
+   parameterless overload lives at a hashed slug
+   (`/2025/Autodesk.Revit.DB.Transaction.Start-1146fa87`) that cannot be derived from the
+   member name — fetches up to `MAX_OVERLOAD_PAGES = 10` of them in parallel
+   (`Promise.allSettled`; unreachable ones are skipped, not fatal) and appends
+   `## Overload Signatures` with each overload's C# block from `fetchSyntaxBlock`. Past the
+   cap the section ends with a note about how many were not expanded. This is the bounded
+   exception to I-05.
+9. Collapse 3+ consecutive newlines and trim.
+10. **Error path (`tools/retrieve-doc.ts`, not `extractDocs.ts`).** On a 404 the catch
+    block calls `suggestInheritedMemberSlug`, which re-reads the *class* page, looks up the
+    member's `Inherited From` cell with `findInheritedFrom` and appends
+    `Try: /<year>/<Namespace>.<DeclaringType>.<Member>` to the error text. Best effort: any
+    failure returns null and the plain error is served unchanged.
 
 ## 9. Documentation map
 
@@ -400,7 +470,40 @@ Ordered by value. Nothing here is started — pick it up only with an explicit i
    — offered, not merged.
 
 Done and removed from this list: the `serverInfo.version` bump (was hardcoded to
-`1.0.0`, now matches the release and is part of the §6 release checklist).
+`1.0.0`, now matches the release and is part of the §6 release checklist), and the five
+usability items shipped in `v1.0.8`.
+
+**Where those five came from — a blind test.** An agent with zero context was given a real
+Revit task (rotate a column 45° around Z, check whether it is pinned, inside a transaction)
+and no hints about the tools. It scored the toolset **7.5/10** (`search-docs` 8.5,
+`retrieve-doc` 6.5), solved the task **without inventing a single signature**, and reported
+exactly the five pains below. They are recorded here so the provenance of the current
+behaviour is not lost:
+
+- **The `urlSlug` format was nowhere described** → it now lives in the parameter's
+  `.describe()` (`lib/toolsCommon.ts`): copy the slug verbatim from the `url` field of a
+  `search-docs` result, the leading slash is optional, the shape is
+  `/<year>/<Namespace>.<Type>` for a class and `/<year>/<Namespace>.<Type>.<Member>` for a
+  member, and one specific overload is addressed by appending its parameter list exactly as
+  shown (`/2025/Autodesk.Revit.DB.Wall.Create(Document,Curve,ElementId,Boolean)`).
+- **Singular vs plural `queryTypes` was unexplained** → now stated in the same file:
+  singular values (Class, Method, Property, Constructor, Interface, Enumeration) match
+  individual API pages from the primary source rvtdocs.com; plural values (Methods,
+  Properties) match a class's whole member-listing page, come only from the secondary source
+  revitapidocs.com, and are returned for only some classes (measured: `WallType` → 1 result,
+  `Transaction` → 1, `Element` → 0, `Level` → 0). They are therefore **not** a reliable way
+  to enumerate members — retrieve the Class page instead, whose Methods/Properties tables
+  list every member including the type each one is declared on.
+- **Search results were thin and duplicated** → `declaringType` (the API already returned
+  `declaring_type`; it was being dropped) and `isObsolete` (set only when true) are passed
+  through, and `dedupePageIdTwins` removes the descriptionless page-id twin of a readable
+  result while keeping page-id results that have no twin.
+- **An inherited member's 404 was a dead end** → the error text now ends with the slug that
+  works (`suggestInheritedMemberSlug` + `findInheritedFrom` in `lib/extractDocs.ts`, called
+  from `tools/retrieve-doc.ts`).
+- **An overloads stub cost one extra call per overload** → such a page now gains
+  `## Overload Signatures` with each overload's C# syntax block, capped at
+  `MAX_OVERLOAD_PAGES = 10` (the bounded exception to I-05).
 
 ## 11. Conventions
 

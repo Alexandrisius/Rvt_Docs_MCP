@@ -71,6 +71,11 @@ npm install -g @opencode/cli        # опционально: бета V2 (ко�
 3. Релиз собран GitHub Actions форка из того же кода, что и при ручной сборке, —
    проверять Deno не нужно, переходи сразу к §3.
 
+> ℹ️ Поведение, описанное в блоке §8 (`declaringType` / `isObsolete` в результатах поиска,
+> удаление page-id-дубликатов, секция `## Overload Signatures` на страницах-заглушках и
+> подсказка slug'а при 404 унаследованного члена), появилось в **`v1.0.8`**. На `v1.0.7`
+> этих полей и секций не будет — всё остальное работает так же.
+
 Проверить, что скачал не апстрим: в релизе форка три ассета и тег `v1.0.6`+;
 в апстриме теги `v1.0.0`…`v1.0.5` от августа 2025.
 
@@ -345,7 +350,13 @@ opencode mcp list        # ожидаем: revit-api-docs В СПИСКЕ НЕТ
 > «Вызови `retrieve-doc` с `urlSlug: "/2025/Autodesk.Revit.DB.Wall.Create(Document,Curve,ElementId,ElementId,Double,Double,Boolean,Boolean)"`.»
 
 **Ожидаемо:** `Declaring Type`, `## Syntax` (C#), `## Parameters` (таблица 8 строк),
-`**Return Value:** \`Wall\``, `## Exceptions` (таблица 5 строк). Объём ~2 400 символов.
+`**Return Value:** \`Wall\``, `## Exceptions` (таблица 5 строк). Объём ~2 400 символов
+(2 425 на `v1.0.8`).
+
+> ℹ️ Не путай два slug. `/2025/Autodesk.Revit.DB.Wall.Create` **без** списка параметров —
+> это страница-заглушка со списком перегрузок, и начиная с `v1.0.8` она дополнительно
+> возвращает `## Overload Signatures` (5 сигнатур, ~2 357 символов). Конкретная
+> перегрузка — это slug со списком параметров, как в запросе выше.
 
 Если все три ответа такие — **установка завершена, всё работает.** Переходи к §8.
 
@@ -356,7 +367,16 @@ opencode mcp list        # ожидаем: revit-api-docs В СПИСКЕ НЕТ
 Создай/дополни файл `AGENTS.md` в корне репозитория и вставь блок ниже **как есть**.
 Он закрывает три реальные проблемы: агент начинает задавать поиску вопросы человеческим
 языком (поиск возвращает мусор), агент путает `retrieve-docs` со списком URL, и агент
-ждёт от MCP примеров кода, которых там нет.
+ждёт от MCP community-примеров, которых там нет: официальный пример со страницы
+отдаётся только при `includeExamples: true`.
+
+Ещё три проблемы в блоке закрыты по итогам «слепого» теста — всего из него выросло пять
+правок `v1.0.8`. Агенту без контекста дали реальную задачу Revit (повернуть колонну на 45°
+вокруг Z, проверить pinned, внутри транзакции) и ничего не подсказывали про инструменты.
+Задачу он решил, не выдумав ни одной сигнатуры, набор оценил на 7,5/10 (`search-docs` 8,5,
+`retrieve-doc` 6,5) и назвал ровно эти боли: формат `urlSlug` нигде не описан,
+множественные `queryTypes` выглядят как способ перечислить члены класса (это не так),
+а член с перегрузками или унаследованный член стоят лишних вызовов и упираются в тупик 404.
 
 ````markdown
 ## Revit API: инструменты поиска (MCP `revit-api-docs`)
@@ -364,9 +384,9 @@ opencode mcp list        # ожидаем: revit-api-docs В СПИСКЕ НЕТ
 В проекте подключён локальный MCP-сервер `revit-api-docs`
 (форк <https://github.com/Alexandrisius/Rvt_Docs_MCP>, exe в `tools/`, конфиг в `opencode.json`).
 Сервер парсит `rvtdocs.com` + `revitapidocs.com` и возвращает справку Revit API в
-компактном markdown. **Собственных знаний у него нет, работает только онлайн;
-единственный код, который он отдаёт, — официальный пример со страницы доков,
-и только по явному запросу (`includeExamples: true`).**
+компактном markdown. **Собственных знаний у него нет, работает только онлайн. C#-синтаксис
+(сигнатуры) есть в каждом ответе; единственный *пример использования* — официальный пример
+со страницы доков, и только по явному запросу (`includeExamples: true`).**
 
 ### Иерархия инструментов (что чем искать)
 
@@ -382,8 +402,8 @@ opencode mcp list        # ожидаем: revit-api-docs В СПИСКЕ НЕТ
 
 | Инструмент | Принимает | Возвращает | Когда использовать |
 |---|---|---|---|
-| `search-docs` | `queryString`, `queryTypes?`, `year?`, `maxResults?` | список сущностей `{title, description, namespace, type, url}` — БЕЗ текста документации | всегда первым, чтобы получить `url` |
-| `retrieve-doc` | `urlSlug` (строка из ответа поиска), `includeExamples?` | одна страница полным markdown | нужна конкретная страница |
+| `search-docs` | `queryString`, `queryTypes?`, `year?`, `maxResults?` | список сущностей `{title, description, namespace, type, url}` — БЕЗ текста документации. У членов дополнительно `declaringType` (тип, который их объявляет), у устаревших — `isObsolete` (иначе поля нет). Дубликаты удалены: обе площадки индексируют одну сущность и читаемым slug'ом, и голым page-id, остаётся читаемый (тот, что с описанием) | всегда первым, чтобы получить `url` |
+| `retrieve-doc` | `urlSlug` (строка из ответа поиска, формат — правило 3), `includeExamples?` | одна страница полным markdown. Страница-заглушка члена с перегрузками дополнительно содержит `## Overload Signatures` — C#-синтаксис каждой перегрузки (не больше 10). Если у члена своей страницы нет (он унаследован), в тексте ошибки 404 приходит готовый slug объявляющего типа | нужна конкретная страница |
 | `retrieve-docs` | `queryString`, `queryTypes?`, `year?`, `maxResults?`, `includeExamples?` | полные тексты ВСЕХ найденных страниц | нужно содержимое нескольких страниц сразу |
 
 ### Жёсткие правила вызова
@@ -396,12 +416,25 @@ opencode mcp list        # ожидаем: revit-api-docs В СПИСКЕ НЕТ
 2. **`retrieve-docs` — это «найти И сразу отдать полные тексты».** Он принимает
    `queryString`, а НЕ список URL. Передать туда свой перечень slug'ов нельзя
    (валидация ответит `queryString: Missing key`).
-3. **`retrieve-doc` принимает только slug** вида `/2025/Autodesk.Revit.DB.Wall`,
-   полученный из поиска. Полные `https://...` URL не подставляй.
+3. **`retrieve-doc` принимает только slug**, полученный из поиска: копируй поле `url`
+   результата `search-docs` дословно, ведущий слэш необязателен. Формат:
+   `/<year>/<Namespace>.<Type>` для класса, `/<year>/<Namespace>.<Type>.<Member>` для члена.
+   Конкретная перегрузка — её список параметров ровно как показан, например
+   `/2025/Autodesk.Revit.DB.Wall.Create(Document,Curve,ElementId,Boolean)`. Полные
+   `https://...` URL не подставляй.
 4. **`year` = версия Revit, под которую пишется код** (диапазон 2020–2027, default 2025).
    Для кросс-версионного кода проверяй сигнатуру в каждой целевой версии — они отличаются.
 5. **`queryTypes` сужает выборку:** `Class`, `Constructor`, `Method`, `Methods`,
    `Property`, `Properties`, `Interface`, `Enumeration`.
+   - Значения в **единственном** числе (Class, Method, Property, Constructor, Interface,
+     Enumeration) соответствуют отдельным страницам API с основного источника rvtdocs.com.
+   - Значения во **множественном** числе (Methods, Properties) соответствуют странице со
+     ВСЕМИ членами класса, приходят только со вторичного источника revitapidocs.com и есть
+     лишь у части классов (замерено: `WallType` → 1 результат, `Transaction` → 1,
+     `Element` → 0, `Level` → 0).
+   - Вывод: перечислить члены класса через `queryTypes: ["Methods"]` **нельзя**. Надёжный
+     способ — `retrieve-doc` по странице класса: её таблицы `Methods` / `Properties`
+     содержат каждый член и тип, на котором он объявлен.
 6. **Экономь токены:** страница класса ≈ 15 000 символов (~4k токенов), страница метода
    ≈ 2 500 символов. Не выгружай десяток страниц класса подряд — сначала `search-docs`,
    потом точечно `retrieve-doc` по методу.
@@ -411,6 +444,15 @@ opencode mcp list        # ожидаем: revit-api-docs В СПИСКЕ НЕТ
    Включай, когда нужно посмотреть, как API реально вызывается; не включай, когда
    нужна только сигнатура. В `retrieve-docs` флаг применяется к каждой странице,
    поэтому держи `maxResults` = 1–2.
+9. **Страница члена живёт на том типе, который его объявил.** У унаследованного члена своей
+   страницы нет: `/2025/Autodesk.Revit.DB.LocationPoint.Rotate` → 404, потому что `Rotate`
+   объявлен на `Location`. С `v1.0.8` такая ошибка заканчивается подсказкой
+   `Try: /2025/Autodesk.Revit.DB.Location.Rotate` — просто вызови этот slug. Объявляющий тип
+   видно заранее: поле `declaringType` в результате `search-docs` или колонка
+   `Inherited From` в таблице членов на странице класса. Подсказка best effort — она требует
+   колонку `Inherited From` (доки 2025+), а если не сработала, придёт обычный текст ошибки.
+   Родственное поле `isObsolete` появляется в результатах поиска только у устаревших
+   сущностей: если оно есть — ищи неустаревшую альтернативу.
 
 ### Порядок работы при любой задаче с Revit API
 
@@ -428,6 +470,9 @@ opencode mcp list        # ожидаем: revit-api-docs В СПИСКЕ НЕТ
   `SKIPPED_SECTION_LABELS`). Официальная секция `Examples` больше не вырезается, но
   включается по запросу: передай `includeExamples: true`. За примерами от сообщества — в Exa.
 - Вкладки синтаксиса VB / C++ / F# — отдаётся только C#.
+- Больше 10 перегрузок одного члена: `## Overload Signatures` раскрывает максимум
+  `MAX_OVERLOAD_PAGES = 10` страниц (худший случай ≈ +1,5 кБ) и дописывает, сколько
+  перегрузок не раскрыто. Недоступная перегрузка пропускается, а не роняет вызов.
 - Мнения, «как лучше», архитектурные рекомендации.
 - Всё, чего нет на `rvtdocs.com` / `revitapidocs.com`.
 - Офлайн-режим: кэша нет, каждый вызов идёт в сеть.
@@ -588,11 +633,11 @@ git ls-files "*.exe"                               # пусто
 
 | Факт | Где подтверждён |
 |---|---|
-| Форк адаптирован под Search V2 | `lib/searchDocs.ts:108` → `https://rvtdocs.com/search/v2/api/`, коммит `42b3bfa` |
+| Форк адаптирован под Search V2 | `lib/searchDocs.ts:173` → `https://rvtdocs.com/search/v2/api/`, коммит `42b3bfa` |
 | Отказоустойчивость поиска | `lib/searchDocs.ts:18` → `Promise.allSettled` по двум источникам |
 | Карточки сообщества вырезаны, официальные примеры — opt-in | `lib/extractDocs.ts` → `SKIPPED_SECTION_LABELS` (Discussion, Community Snippets) + `EXAMPLES_SECTION_LABEL` под флагом `includeExamples` |
 | `includeExamples` замерен, ответ по умолчанию не изменился | проверено на живых страницах и собранном exe 08.09.2026: `Wall.Create(...)` → 2 425 симв. без флага (идентично базлайну `v1.0.6`) и 2 970 с флагом; `ReferenceIntersector` → 4 571 → 7 872; `Element` (официального примера нет, но есть Python-сниппет сообщества) → 17 652 → 17 652, то есть флаг не добавляет ничего, кроме официального C#-примера. Официальные примеры найдены на 12 из 24 проверенных страниц, по 154–3 272 символа |
-| Диапазон версий 2020–2027 | `lib/toolsCommon.ts:67` → `z.number().min(2020).max(2027)` |
+| Диапазон версий 2020–2027 | `lib/toolsCommon.ts:78` → `z.number().min(2020).max(2027)` |
 | `search-library` gated по ключам | `main.ts` → `if (apiKey && vectorStoreId) createSearchLibrary(server)` |
 | Релиз форка с рабочими бинарниками | <https://github.com/Alexandrisius/Rvt_Docs_MCP/releases> → `v1.0.6` (3 ассета: windows, macos-x64, macos-arm64), собран GitHub Actions по тегу |
 | Релизы апстрима сломаны | <https://github.com/kaitpw/Rvt_Docs_MCP/issues/3> — разбор причины |
@@ -600,5 +645,12 @@ git ls-files "*.exe"                               # пусто
 | Относительный путь в конфиге работает | проверено `opencode mcp list` → `connected`, 08.09.2026 |
 | Инструкция проверена end-to-end | команды §3–§6 выполнены дословно в пустой тестовой папке: BOM = `123,10,32`, `git check-ignore` → `.gitignore:1:*.exe`, `git ls-files "*.exe"` → пусто, `opencode mcp list` → `✓ revit-api-docs connected` |
 | CI-артефакт релиза `v1.0.6` рабочий | скачанный `Rvt_Docs_MCP-windows.exe` (97 433 508 байт) проверен прямым MCP-stdio-клиентом: `initialize` → `revit-docs-mcp v1.0.0`, `tools/list` → `search-docs, retrieve-docs, retrieve-doc`, `search-docs "Wall"` → slug'и, `retrieve-doc` перегрузки `Wall.Create` → 2 425 симв. с Parameters / Exceptions / Return Value / C#-синтаксисом / Overloads |
-| Сборки различимы начиная с `v1.0.7` | `main.ts` → `McpServer({ name: "revit-docs-mcp", version: "1.0.7" })`. CI-артефакт `v1.0.6` в строке выше всё ещё отвечал `1.0.0` — именно поэтому версию надо поднимать перед каждым тегом |
+| Сборки различимы начиная с `v1.0.7` | `main.ts` → `McpServer({ name: "revit-docs-mcp", version: ... })`: с `v1.0.7` там настоящая версия релиза, сейчас — `1.0.8`. CI-артефакт `v1.0.6` в строке выше всё ещё отвечал `1.0.0` — именно поэтому версию надо поднимать перед каждым тегом |
 | CI-артефакт релиза `v1.0.7` рабочий | скачанный `Rvt_Docs_MCP-windows.exe` (97 441 696 байт) проверен прямым MCP-stdio-клиентом 08.09.2026: `initialize` → `revit-docs-mcp v1.0.7`, `tools/list` → `search-docs, retrieve-docs, retrieve-doc`, схема `retrieve-doc` → `["urlSlug","includeExamples"]` с `includeExamples` по умолчанию `false`, перегрузка `Wall.Create` → 2 425 симв. без флага (идентично `v1.0.6`) и 2 970 симв. с `includeExamples: true` |
+| Пять правок удобства `v1.0.8` выросли из «слепого» теста | 08.09.2026: агенту без контекста дали реальную задачу Revit (повернуть колонну на 45° вокруг Z, проверить pinned, внутри транзакции) и ничего не подсказывали про инструменты. Он оценил набор на 7,5/10 (`search-docs` 8,5, `retrieve-doc` 6,5), решил задачу, не выдумав ни одной сигнатуры, и назвал ровно те пять проблем, которые закрыты строками ниже |
+| Формат `urlSlug` описан в самом параметре | `lib/toolsCommon.ts` → `toolValidators.urlSlug` `.describe(...)`: копировать `url` из результата `search-docs` дословно, ведущий слэш необязателен, `/<year>/<Namespace>.<Type>` для класса и `/<year>/<Namespace>.<Type>.<Member>` для члена, конкретная перегрузка — её список параметров как показан |
+| Единственное/множественное число `queryTypes` разъяснено | `lib/toolsCommon.ts` → `queryTypes` `.describe(...)`. Замерено для `Methods`: `WallType` → 1 результат, `Transaction` → 1, `Element` → 0, `Level` → 0, то есть перечислить члены класса так нельзя — только через страницу `Class` |
+| Результаты поиска полнее и без дублей | `types/index.ts` → опциональные `declaringType` / `isObsolete` (API и раньше возвращал `declaring_type`, он выбрасывался); `lib/searchDocs.ts` → `dedupePageIdTwins` (+ `PAGE_ID_SLUG`, `memberNameOf`) после `dedupeByUrl`. Замерено 08.09.2026: `search-docs "RotateElement"` было 5 результатов (2 page-id-дубля без описания) → стало 3, page-id-slug'ов 0, `declaringType` у всех трёх. `search-docs "WallType"` с `queryTypes: ["Methods"]` → 1 результат типа `Methods`, page-id-slug сохранён (читаемого близнеца нет) — дедупликация не сломала единственный путь к странице состава класса |
+| 404 унаследованного члена теперь отдаёт рабочий slug | `lib/extractDocs.ts` → `suggestInheritedMemberSlug` + `findInheritedFrom`, вызываются из catch-блока `tools/retrieve-doc.ts`. Замерено: `retrieve-doc /2025/Autodesk.Revit.DB.LocationPoint.Rotate` → текст ошибки заканчивается на `Try: /2025/Autodesk.Revit.DB.Location.Rotate` |
+| Страницы-заглушки перегрузок содержат сигнатуры | `lib/extractDocs.ts` → `isOverloadsStub`, `extractOverloadSignatures`, `fetchSyntaxBlock`, `MAX_OVERLOAD_PAGES = 10`. Замерено: `retrieve-doc /2025/Autodesk.Revit.DB.Transaction.Start` 382 → 548 симв., появилась секция `## Overload Signatures` с `### Start()` и `### Start(String)` и настоящим C# (`public TransactionStatus Start`); заглушка `Wall.Create` раскрылась в 2 357 симв. с 5 сигнатурами |
+| Ответ по умолчанию не изменился, типы сходятся | замерено на локальной сборке 08.09.2026 через MCP-stdio: `ElementTransformUtils.RotateElement` с `includeExamples: true` → 1 165 симв. с `## Examples` и примером `RotateColumn`, тот же slug без флага → 827 симв. с `## Parameters` / `## Exceptions` и БЕЗ `## Examples`. `deno check main.ts` → код возврата 0 |

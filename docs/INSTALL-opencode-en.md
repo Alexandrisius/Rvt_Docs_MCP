@@ -72,6 +72,11 @@ npm install -g @opencode/cli        # optional: V2 beta (the opencode2 command)
 3. The release is built by the fork's GitHub Actions from the same code you would compile
    manually — there is no Deno to check, go straight to §3.
 
+> ℹ️ The behaviour described in the §8 block (`declaringType` / `isObsolete` in search results,
+> removal of page-id duplicates, the `## Overload Signatures` section on stub pages and the slug
+> hint on an inherited member's 404) appeared in **`v1.0.8`**. On `v1.0.7` those fields and
+> sections will not be there — everything else works the same.
+
 To confirm you did not download the upstream: the fork's release has three assets and a tag
 of `v1.0.6` or newer; the upstream tags are `v1.0.0`…`v1.0.5`, all from August 2025.
 
@@ -346,7 +351,13 @@ And a method version check:
 > Call `retrieve-doc` with `urlSlug: "/2025/Autodesk.Revit.DB.Wall.Create(Document,Curve,ElementId,ElementId,Double,Double,Boolean,Boolean)"`.
 
 **Expected:** `Declaring Type`, `## Syntax` (C#), `## Parameters` (table, 8 rows),
-`**Return Value:** \`Wall\``, `## Exceptions` (table, 5 rows). Size ~2,400 characters.
+`**Return Value:** \`Wall\``, `## Exceptions` (table, 5 rows). Size ~2,400 characters
+(2,425 on `v1.0.8`).
+
+> ℹ️ Do not confuse the two slugs. `/2025/Autodesk.Revit.DB.Wall.Create` **without** a
+> parameter list is the overloads stub page, and since `v1.0.8` it additionally returns
+> `## Overload Signatures` (5 signatures, ~2,357 characters). A specific overload is the
+> slug with the parameter list, as in the request above.
 
 If all three responses look like this — **the installation is complete, everything works.**
 Move on to §8.
@@ -358,7 +369,16 @@ Move on to §8.
 Create or extend the file `AGENTS.md` at the root of your repository and paste the block below
 **as is**. It closes three real problems: the agent starts asking the search questions in human
 language (the search returns garbage), the agent confuses `retrieve-docs` with a list of URLs,
-and the agent expects code examples from an MCP that has none.
+and the agent expects community code examples from an MCP that has none — the official example
+that ships with a page is served only when `includeExamples: true` is passed.
+
+Three more problems in the block were closed after a blind test — all five `v1.0.8` fixes came
+out of it. An agent with zero context was given a real Revit task (rotate a column 45° around Z,
+check that it is pinned, inside a transaction) and no hints about the tools. It solved the task
+without inventing a single signature, scored the toolset 7.5/10 (`search-docs` 8.5,
+`retrieve-doc` 6.5), and named exactly these pains: the `urlSlug` format was not described
+anywhere, the plural `queryTypes` look like a way to enumerate a class's members (they are not),
+and a member with overloads or an inherited member cost extra calls and ran into a dead-end 404.
 
 ````markdown
 ## Revit API: search tools (MCP `revit-api-docs`)
@@ -366,9 +386,9 @@ and the agent expects code examples from an MCP that has none.
 This project has a local MCP server `revit-api-docs` connected
 (fork of <https://github.com/Alexandrisius/Rvt_Docs_MCP>, exe in `tools/`, config in `opencode.json`).
 The server parses `rvtdocs.com` + `revitapidocs.com` and returns Revit API reference material as
-compact markdown. **It has no knowledge of its own and it works online only; the only
-code it returns is the official example that ships with a docs page, and only when you
-explicitly ask for it (`includeExamples: true`).**
+compact markdown. **It has no knowledge of its own and it works online only. C# syntax
+(signatures) comes with every response; the only *usage sample* is the official example that
+ships with a docs page, and only when you explicitly ask for it (`includeExamples: true`).**
 
 ### Tool hierarchy (what to use for what)
 
@@ -384,8 +404,8 @@ explicitly ask for it (`includeExamples: true`).**
 
 | Tool | Accepts | Returns | When to use |
 |---|---|---|---|
-| `search-docs` | `queryString`, `queryTypes?`, `year?`, `maxResults?` | a list of entities `{title, description, namespace, type, url}` — WITHOUT the documentation text | always first, to obtain the `url` |
-| `retrieve-doc` | `urlSlug` (a string from the search response), `includeExamples?` | one page as full markdown | you need one specific page |
+| `search-docs` | `queryString`, `queryTypes?`, `year?`, `maxResults?` | a list of entities `{title, description, namespace, type, url}` — WITHOUT the documentation text. Members additionally carry `declaringType` (the type that declares them), deprecated entities carry `isObsolete` (otherwise the field is absent). Duplicates are removed: both sites index the same entity under a readable slug and under a bare page id, and what you get is the readable one (the one with a description) | always first, to obtain the `url` |
+| `retrieve-doc` | `urlSlug` (a string from the search response, format — rule 3), `includeExamples?` | one page as full markdown. A stub page of a member with overloads additionally contains `## Overload Signatures` — the C# syntax of every overload (at most 10). If a member has no page of its own (it is inherited), the 404 error text carries the ready-made slug of the type that declares it | you need one specific page |
 | `retrieve-docs` | `queryString`, `queryTypes?`, `year?`, `maxResults?`, `includeExamples?` | the full text of ALL pages found | you need the contents of several pages at once |
 
 ### Hard rules for calling the tools
@@ -399,12 +419,24 @@ explicitly ask for it (`includeExamples: true`).**
 2. **`retrieve-docs` means "find AND immediately return the full texts".** It accepts
    `queryString`, NOT a list of URLs. You cannot pass it your own list of slugs
    (validation will answer `queryString: Missing key`).
-3. **`retrieve-doc` accepts only a slug** like `/2025/Autodesk.Revit.DB.Wall`, obtained from a
-   search. Do not substitute full `https://...` URLs.
+3. **`retrieve-doc` accepts only a slug** obtained from a search: copy the `url` field of a
+   `search-docs` result verbatim, the leading slash is optional. Shape:
+   `/<year>/<Namespace>.<Type>` for a class, `/<year>/<Namespace>.<Type>.<Member>` for a member.
+   A specific overload is its parameter list exactly as shown, for example
+   `/2025/Autodesk.Revit.DB.Wall.Create(Document,Curve,ElementId,Boolean)`. Do not substitute
+   full `https://...` URLs.
 4. **`year` = the Revit version you are writing the code for** (range 2020–2027, default 2025).
    For cross-version code, check the signature in every target version — they differ.
 5. **`queryTypes` narrows the result set:** `Class`, `Constructor`, `Method`, `Methods`,
    `Property`, `Properties`, `Interface`, `Enumeration`.
+   - **Singular** values (Class, Method, Property, Constructor, Interface, Enumeration) match
+     individual API pages from the primary source, rvtdocs.com.
+   - **Plural** values (Methods, Properties) match a class's page listing ALL of its members,
+     come only from the secondary source, revitapidocs.com, and exist for only some classes
+     (measured: `WallType` → 1 result, `Transaction` → 1, `Element` → 0, `Level` → 0).
+   - Conclusion: you **cannot** enumerate a class's members with `queryTypes: ["Methods"]`.
+     The reliable way is `retrieve-doc` on the Class page: its `Methods` / `Properties` tables
+     list every member and the type each one is declared on.
 6. **Save tokens:** a class page ≈ 15,000 characters (~4k tokens), a method page
    ≈ 2,500 characters. Do not dump a dozen class pages in a row — first `search-docs`,
    then `retrieve-doc` for the specific method.
@@ -413,6 +445,15 @@ explicitly ask for it (`includeExamples: true`).**
    +500 to +3,300 characters, and only about half of all pages have one. Turn it on
    when you need to see how the API is actually called; leave it off when you only need
    the signature. In `retrieve-docs` it applies to every page, so keep `maxResults` at 1-2.
+9. **A member's page lives on the type that declares it.** An inherited member has no page of
+   its own: `/2025/Autodesk.Revit.DB.LocationPoint.Rotate` → 404, because `Rotate` is declared
+   on `Location`. Since `v1.0.8` such an error ends with the hint
+   `Try: /2025/Autodesk.Revit.DB.Location.Rotate` — just call that slug. The declaring type is
+   visible in advance: the `declaringType` field of a `search-docs` result, or the
+   `Inherited From` column of the member tables on the class page. The hint is best effort — it
+   needs the `Inherited From` column (2025+ docs), and when it does not fire you get the plain
+   error text. The related field `isObsolete` shows up in search results only on deprecated
+   entities: when it is set, look for a non-obsolete alternative.
 
 ### Order of work for any Revit API task
 
@@ -430,6 +471,9 @@ explicitly ask for it (`includeExamples: true`).**
   `SKIPPED_SECTION_LABELS`). The official SDK `Examples` card is no longer cut, but it is
   opt-in: pass `includeExamples: true`. For community examples, go to Exa.
 - VB / C++ / F# syntax tabs — only C# is returned.
+- More than 10 overloads of one member: `## Overload Signatures` expands at most
+  `MAX_OVERLOAD_PAGES = 10` pages (worst case ≈ +1.5 kB) and states how many overloads were not
+  expanded. An unreachable overload is skipped instead of failing the call.
 - Opinions, "what is the best way", architectural recommendations.
 - Anything that is not on `rvtdocs.com` / `revitapidocs.com`.
 - Offline mode: there is no cache, every call goes to the network.
@@ -590,11 +634,11 @@ git ls-files "*.exe"                               # empty
 
 | Fact | Where it is confirmed |
 |---|---|
-| The fork is adapted to Search V2 | `lib/searchDocs.ts:108` → `https://rvtdocs.com/search/v2/api/`, commit `42b3bfa` |
+| The fork is adapted to Search V2 | `lib/searchDocs.ts:173` → `https://rvtdocs.com/search/v2/api/`, commit `42b3bfa` |
 | Search resilience | `lib/searchDocs.ts:18` → `Promise.allSettled` over two sources |
 | Community cards are cut out, official examples are opt-in | `lib/extractDocs.ts` → `SKIPPED_SECTION_LABELS` (Discussion, Community Snippets) + `EXAMPLES_SECTION_LABEL` gated by `includeExamples` |
 | `includeExamples` measured, the default response untouched | verified against live pages and the compiled exe on 2026-09-08: `Wall.Create(...)` → 2,425 chars without the flag (identical to the `v1.0.6` baseline) and 2,970 with it; `ReferenceIntersector` → 4,571 → 7,872; `Element` (no official example, but a community Python snippet) → 17,652 → 17,652, i.e. the flag adds nothing but the official C# example. Official examples were found on 12 of 24 sampled pages, 154–3,272 characters each |
-| Version range 2020–2027 | `lib/toolsCommon.ts:67` → `z.number().min(2020).max(2027)` |
+| Version range 2020–2027 | `lib/toolsCommon.ts:78` → `z.number().min(2020).max(2027)` |
 | `search-library` is gated by keys | `main.ts` → `if (apiKey && vectorStoreId) createSearchLibrary(server)` |
 | Fork release with working binaries | <https://github.com/Alexandrisius/Rvt_Docs_MCP/releases> → `v1.0.6` (3 assets: windows, macos-x64, macos-arm64), built by GitHub Actions on the tag |
 | Upstream releases are broken | <https://github.com/kaitpw/Rvt_Docs_MCP/issues/3> — root cause analysis |
@@ -602,5 +646,12 @@ git ls-files "*.exe"                               # empty
 | A relative path in the config works | verified with `opencode mcp list` → `connected`, 2026-09-08 |
 | The guide was verified end-to-end | the §3–§6 commands were run verbatim in an empty test folder: BOM = `123,10,32`, `git check-ignore` → `.gitignore:1:*.exe`, `git ls-files "*.exe"` → empty, `opencode mcp list` → `✓ revit-api-docs connected` |
 | The CI artifact of release `v1.0.6` works | the downloaded `Rvt_Docs_MCP-windows.exe` (97,433,508 bytes) was checked with a direct MCP-stdio client: `initialize` → `revit-docs-mcp v1.0.0`, `tools/list` → `search-docs, retrieve-docs, retrieve-doc`, `search-docs "Wall"` → slugs, `retrieve-doc` for the `Wall.Create` overload → 2,425 chars with Parameters / Exceptions / Return Value / C# syntax / Overloads |
-| Builds are distinguishable since `v1.0.7` | `main.ts` → `McpServer({ name: "revit-docs-mcp", version: "1.0.7" })`. The `v1.0.6` artifact in the row above still reported `1.0.0`, which is exactly why the version has to be bumped before every tag |
+| Builds are distinguishable since `v1.0.7` | `main.ts` → `McpServer({ name: "revit-docs-mcp", version: ... })`: since `v1.0.7` it carries the real release version, currently `1.0.8`. The `v1.0.6` artifact in the row above still reported `1.0.0`, which is exactly why the version has to be bumped before every tag |
 | The CI artifact of release `v1.0.7` works | the downloaded `Rvt_Docs_MCP-windows.exe` (97,441,696 bytes) was checked with a direct MCP-stdio client on 2026-09-08: `initialize` → `revit-docs-mcp v1.0.7`, `tools/list` → `search-docs, retrieve-docs, retrieve-doc`, `retrieve-doc` schema → `["urlSlug","includeExamples"]` with `includeExamples` default `false`, the `Wall.Create` overload → 2,425 chars without the flag (identical to `v1.0.6`) and 2,970 chars with `includeExamples: true` |
+| The five `v1.0.8` usability fixes came out of a blind test | 2026-09-08: an agent with zero context was given a real Revit task (rotate a column 45° around Z, check that it is pinned, inside a transaction) and no hints about the tools. It scored the toolset 7.5/10 (`search-docs` 8.5, `retrieve-doc` 6.5), solved the task without inventing a single signature, and named exactly the five problems closed by the rows below |
+| The `urlSlug` format is documented in the parameter itself | `lib/toolsCommon.ts` → `toolValidators.urlSlug` `.describe(...)`: copy the `url` of a `search-docs` result verbatim, the leading slash is optional, `/<year>/<Namespace>.<Type>` for a class and `/<year>/<Namespace>.<Type>.<Member>` for a member, a specific overload is its parameter list exactly as shown |
+| Singular vs plural `queryTypes` is explained | `lib/toolsCommon.ts` → `queryTypes` `.describe(...)`. Measured for `Methods`: `WallType` → 1 result, `Transaction` → 1, `Element` → 0, `Level` → 0, i.e. a class's members cannot be enumerated that way — only through the `Class` page |
+| Search results are richer and deduplicated | `types/index.ts` → the optional `declaringType` / `isObsolete` (the API already returned `declaring_type`, it was being dropped); `lib/searchDocs.ts` → `dedupePageIdTwins` (plus `PAGE_ID_SLUG`, `memberNameOf`) after `dedupeByUrl`. Measured 2026-09-08: `search-docs "RotateElement"` was 5 results (2 page-id duplicates without a description) → now 3, zero page-id slugs, `declaringType` on all three. `search-docs "WallType"` with `queryTypes: ["Methods"]` → 1 result of type `Methods` with the page-id slug preserved (no readable twin) — the dedupe did not break the only path to a class's member-listing page |
+| An inherited member's 404 now returns a slug that works | `lib/extractDocs.ts` → `suggestInheritedMemberSlug` + `findInheritedFrom`, called from the catch block of `tools/retrieve-doc.ts`. Measured: `retrieve-doc /2025/Autodesk.Revit.DB.LocationPoint.Rotate` → the error text ends with `Try: /2025/Autodesk.Revit.DB.Location.Rotate` |
+| Overloads stub pages contain the signatures | `lib/extractDocs.ts` → `isOverloadsStub`, `extractOverloadSignatures`, `fetchSyntaxBlock`, `MAX_OVERLOAD_PAGES = 10`. Measured: `retrieve-doc /2025/Autodesk.Revit.DB.Transaction.Start` 382 → 548 chars, with a new `## Overload Signatures` section holding `### Start()` and `### Start(String)` and the real C# (`public TransactionStatus Start`); the `Wall.Create` stub expanded to 2,357 chars with 5 signatures |
+| The default response is unchanged, the types check out | measured on the local build on 2026-09-08 over MCP stdio: `ElementTransformUtils.RotateElement` with `includeExamples: true` → 1,165 chars with `## Examples` and the `RotateColumn` sample, the same slug without the flag → 827 chars with `## Parameters` / `## Exceptions` and WITHOUT `## Examples`. `deno check main.ts` → exit code 0 |
