@@ -1,5 +1,37 @@
 # Revit API MCP Server
 
+> ## ⚠️ This is a maintained fork
+>
+> Forked from [kaitpw/Rvt_Docs_MCP](https://github.com/kaitpw/Rvt_Docs_MCP)
+> (upstream inactive since August 2025).
+>
+> **Binaries in the upstream releases are broken.** Around 4-5 September 2026
+> rvtdocs.com migrated to a new "Search V2" backend: the old
+> `POST /search/api/search` endpoint was removed and the documentation pages were
+> re-templated. Builds produced before that date still start and look healthy, but
+> fail on every call — `search-docs` returns `404 Not Found`, `retrieve-doc`
+> returns `Main content section not found`. Full analysis:
+> [kaitpw/Rvt_Docs_MCP#3](https://github.com/kaitpw/Rvt_Docs_MCP/issues/3).
+>
+> **Get working binaries from
+> [this repository's Releases](https://github.com/Alexandrisius/Rvt_Docs_MCP/releases)**
+> (`v1.0.6` and newer), or build from source — see [Setup](#setup).
+>
+> ### What changed in this fork
+>
+> - **Search** now targets the new endpoint
+>   `GET https://rvtdocs.com/search/v2/api/`. The `fields` parameter is mandatory:
+>   without it the backend returns an empty result set.
+> - **Page scraper rewritten** for the redesigned layout — it anchors on stable CSS
+>   classes instead of HTML template comments, and additionally extracts
+>   Parameters / Exceptions / Return Value as tables, the overload tree and the C#
+>   syntax block. VB / C++ / F# tabs and the Discussion / Community Snippets /
+>   Examples cards are dropped on purpose to keep responses token-cheap.
+> - **Resilience**: both search sources are queried with `Promise.allSettled`, so a
+>   dead source degrades the result set instead of failing the whole call; in
+>   `retrieve-docs` one unreachable page no longer discards pages already fetched.
+> - **Version range** widened to 2020-2027 to match site coverage.
+
 ## Overview
 
 Because of the absurd surface area of the Revit API, AI often hallucinates
@@ -58,10 +90,35 @@ documentation:
 ## Setup
 
 Download the executable for your OS from
-[Releases](https://github.com/kaitpw/Rvt_Docs_MCP/releases). Or you can clone
-and build from source using `deno task compile`. Add this executable somewhere
-in your file system that makes sense. Good practice for Windows is
-`<username>/bin/`, but it can be anywhere.
+[**this repository's Releases**](https://github.com/Alexandrisius/Rvt_Docs_MCP/releases)
+(`v1.0.6` and newer). Do **not** use the
+[upstream releases](https://github.com/kaitpw/Rvt_Docs_MCP/releases) — those builds
+predate the rvtdocs.com Search V2 migration and fail on every call (see the fork
+notice at the top).
+
+Or clone and build from source:
+
+```bash
+git clone https://github.com/Alexandrisius/Rvt_Docs_MCP.git
+cd Rvt_Docs_MCP
+
+deno compile -A --output Rvt_Docs_MCP-windows.exe main.ts   # Windows
+deno compile -A --output Rvt_Docs_MCP main.ts               # macOS / Linux
+```
+
+`deno task compile` works too, but Deno then names the binary after the entrypoint
+(`main.exe`). Pass `--output` explicitly when the name matters, because that is the
+name you put into your MCP config. Cross-compiling from any OS:
+
+```bash
+deno compile -A --target x86_64-pc-windows-msvc --output Rvt_Docs_MCP-windows.exe main.ts
+deno compile -A --target aarch64-apple-darwin  --output Rvt_Docs_MCP-macos-arm64   main.ts
+```
+
+Add this executable somewhere in your file system that makes sense. Good practice
+for Windows is `<username>/bin/`, but it can be anywhere — including a `tools/`
+folder inside your project, which lets you use a project-relative path in the MCP
+config and commit that config to git.
 
 Run `path\to\executable -h` in your terminal to see the help menu. FYI: This
 executable is useless to run in the terminal besides for the help menu and for
@@ -92,6 +149,30 @@ client and OS your using.
   }
 }
 ```
+
+### opencode config
+
+opencode uses a different shape (`mcp` + `type: local` + `command` as an array).
+Project-relative paths are resolved from the project root, so the config below can
+be committed to git while the executable itself stays untracked:
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "revit-api-docs": {
+      "type": "local",
+      "command": ["tools/Rvt_Docs_MCP-windows.exe"],
+      "enabled": true
+    }
+  }
+}
+```
+
+Verify with `opencode mcp list` — expect `✓ revit-api-docs connected`. Restart
+opencode after editing the config; already-running sessions do not pick up new
+servers. Keep the executable out of git (it is ~93 MB and GitHub blocks files over
+100 MB): add `*.exe` to `.gitignore` and commit only the config.
 
 To enable search-library, you must first follow the steps described in
 [Rvt_Docs_Tbc_Embedder](https://github.com/kaitpw/Rvt_Docs_TBC_Embedder). After
