@@ -66,7 +66,7 @@ npm install -g @opencode/cli        # optional: V2 beta (the opencode2 command)
 ### Option A — download the ready-made exe (fast, RECOMMENDED)
 
 1. Open **<https://github.com/Alexandrisius/Rvt_Docs_MCP/releases>**
-2. Take the latest release (**`v1.0.7`** or newer) and download the asset
+2. Take the latest release (**`v1.0.9`** or newer) and download the asset
    **`Rvt_Docs_MCP-windows.exe`** (~93 MB).
    For macOS: `Rvt_Docs_MCP-macos-arm64` (Apple Silicon) or `Rvt_Docs_MCP-macos-x64` (Intel).
 3. The release is built by the fork's GitHub Actions from the same code you would compile
@@ -76,6 +76,11 @@ npm install -g @opencode/cli        # optional: V2 beta (the opencode2 command)
 > removal of page-id duplicates, the `## Overload Signatures` section on stub pages and the slug
 > hint on an inherited member's 404) appeared in **`v1.0.8`**. On `v1.0.7` those fields and
 > sections will not be there — everything else works the same.
+>
+> Since **`v1.0.9`** the server's stdout carries JSON-RPC and nothing else: every diagnostic
+> (key status, warnings, "server is running") goes to stderr, and the OpenAI key is no longer
+> echoed even as a prefix. Nothing changes for opencode, but strict MCP clients no longer trip
+> over stray lines.
 
 To confirm you did not download the upstream: the fork's release has three assets and a tag
 of `v1.0.6` or newer; the upstream tags are `v1.0.0`…`v1.0.5`, all from August 2025.
@@ -515,7 +520,7 @@ both `OPENAI_API_KEY` **and** `OPENAI_VECTOR_STORE_ID` are present. Without them
 | `Invalid arguments ... queryString: Missing key` | a list of URLs was passed to `retrieve-docs` | `retrieve-docs` takes `queryString` (search + delivery); for one specific slug use `retrieve-doc` |
 | The search returns an empty/garbage list | `queryString` was set to a phrase | entity names only: `Wall`, `Class.Member` |
 | `FileNotFoundException` / SmartScreen blocks the exe | Windows protection against an unsigned binary | file properties → "Unblock"; or build the exe yourself (§2B) |
-| The server connects but a strict MCP client breaks the handshake | the server prints informational lines to stdout (`console.info` in `main.ts`) | opencode tolerates this fine; for another client, remove/redirect that output to stderr |
+| The server connects but a strict MCP client breaks the handshake | **fixed in `v1.0.9`**: the server used to print informational lines to stdout (`console.info` in `main.ts`). If the symptom is back, something writes to stdout again | update the exe to `v1.0.9`+; check: a short stdio session must produce 4 JSON lines and 0 stray lines on stdout, with all diagnostics on stderr |
 | The server is absent in another repository | by design: the config is project-scoped | copy `opencode.json` there, or register it in the global config |
 | `git push` rejected: file over 100 MB | the exe got into git | add `*.exe` to `.gitignore`, `git rm --cached tools/Rvt_Docs_MCP-windows.exe`, commit again |
 
@@ -646,7 +651,8 @@ git ls-files "*.exe"                               # empty
 | A relative path in the config works | verified with `opencode mcp list` → `connected`, 2026-09-08 |
 | The guide was verified end-to-end | the §3–§6 commands were run verbatim in an empty test folder: BOM = `123,10,32`, `git check-ignore` → `.gitignore:1:*.exe`, `git ls-files "*.exe"` → empty, `opencode mcp list` → `✓ revit-api-docs connected` |
 | The CI artifact of release `v1.0.6` works | the downloaded `Rvt_Docs_MCP-windows.exe` (97,433,508 bytes) was checked with a direct MCP-stdio client: `initialize` → `revit-docs-mcp v1.0.0`, `tools/list` → `search-docs, retrieve-docs, retrieve-doc`, `search-docs "Wall"` → slugs, `retrieve-doc` for the `Wall.Create` overload → 2,425 chars with Parameters / Exceptions / Return Value / C# syntax / Overloads |
-| Builds are distinguishable since `v1.0.7` | `main.ts` → `McpServer({ name: "revit-docs-mcp", version: ... })`: since `v1.0.7` it carries the real release version, currently `1.0.8`. The `v1.0.6` artifact in the row above still reported `1.0.0`, which is exactly why the version has to be bumped before every tag |
+| Builds are distinguishable since `v1.0.7` | `main.ts` → `McpServer({ name: "revit-docs-mcp", version: ... })`: since `v1.0.7` it carries the real release version, currently `1.0.9`. The `v1.0.6` artifact in the row above still reported `1.0.0`, which is exactly why the version has to be bumped before every tag |
+| stdout is clean since `v1.0.9` | measured on the `v1.0.9` build through a direct stdio client: `initialize` + `tools/list` + `search-docs` + `retrieve-doc` produced **4 JSON lines and 0 stray lines** on stdout, and 5 diagnostics on stderr (`OpenAI API key: not set`, `Vector store ID: not set`, the two `search-library` warnings, `Revit API Docs MCP Server is running...`). The key is no longer echoed even as a prefix. The `v1.0.8` behaviour is unchanged: search `RotateElement` → 3 results with `declaringType`, the `Transaction.Start` stub → 548 chars with `## Overload Signatures` |
 | The CI artifact of release `v1.0.7` works | the downloaded `Rvt_Docs_MCP-windows.exe` (97,441,696 bytes) was checked with a direct MCP-stdio client on 2026-09-08: `initialize` → `revit-docs-mcp v1.0.7`, `tools/list` → `search-docs, retrieve-docs, retrieve-doc`, `retrieve-doc` schema → `["urlSlug","includeExamples"]` with `includeExamples` default `false`, the `Wall.Create` overload → 2,425 chars without the flag (identical to `v1.0.6`) and 2,970 chars with `includeExamples: true` |
 | The five `v1.0.8` usability fixes came out of a blind test | 2026-09-08: an agent with zero context was given a real Revit task (rotate a column 45° around Z, check that it is pinned, inside a transaction) and no hints about the tools. It scored the toolset 7.5/10 (`search-docs` 8.5, `retrieve-doc` 6.5), solved the task without inventing a single signature, and named exactly the five problems closed by the rows below |
 | The `urlSlug` format is documented in the parameter itself | `lib/toolsCommon.ts` → `toolValidators.urlSlug` `.describe(...)`: copy the `url` of a `search-docs` result verbatim, the leading slash is optional, `/<year>/<Namespace>.<Type>` for a class and `/<year>/<Namespace>.<Type>.<Member>` for a member, a specific overload is its parameter list exactly as shown |

@@ -62,22 +62,27 @@ will use a combination of tools to explore the API docs on its own.
 
 ### Features (Planned)
 
-- **Code Examples**: the official SDK example that ships with a docs page is already
-  available per call (`includeExamples: true` on `retrieve-doc` / `retrieve-docs`).
-  What is still missing is *community* code: Get code examples for Revit API usage and
-  make them accessible. See
-  [RevitSdkSamples](https://github.com/jeremytammik/RevitSdkSamples) and
+- **Caching**: cache responses to reduce traffic to the API doc sites and to survive the
+  next upstream site migration. This is the top open item — see `AGENTS.md` §10.
+
+### Explicitly not planned
+
+- **A bundled code-example corpus.** The official SDK example that ships with a docs page
+  is already available per call (`includeExamples: true` on `retrieve-doc` /
+  `retrieve-docs`), and that is where example support stops. Indexing or embedding
+  third-party corpora —
+  [RevitSdkSamples](https://github.com/jeremytammik/RevitSdkSamples) (MIT, 1.8 GB),
   [the_building_coder_samples](https://github.com/jeremytammik/the_building_coder_samples)
-  (both MIT). Or maybe even entire repos, like those from ricuan-io, Nice3point,
-  chuongmep, kilkellym, and of course jeremytammik. Note that The Building Coder blog
-  itself moved off Typepad (shut down August 2025) to
-  [jeremytammik.github.io/tbc](https://jeremytammik.github.io/tbc/a/) — MIT-licensed,
-  with a complete post index and a Pagefind full-text index, so it is now practical to
-  consume without scraping.
-- **More Resources**: Add other content to the vector store. Candidates include
-  tbc-related pdfs, random blog posts, and Autodesk University resources.
-- **Caching (Unlikely)**: Cache responses to reduce traffic to the api doc
-  sites.
+  (MIT, ~3.4 MB), The Building Coder prose (moved off Typepad in August 2025 to
+  [jeremytammik.github.io/tbc](https://jeremytammik.github.io/tbc/a/), MIT, with a
+  complete post index and a Pagefind index), other community repos, or a store of
+  agent-contributed snippets — was researched and **rejected** by the maintainer on
+  2026-09-08. It would turn a stateless scraper into a dataset with licensing, staleness
+  and retrieval-quality obligations, and web search already answers "find me a real-world
+  example" better than a frozen snapshot would. The decision and the research behind it
+  are recorded in `AGENTS.md` §10 so the question does not come back.
+- **More vector-store content** for `search-library`: stays as upstream designed it —
+  optional, gated behind OpenAI credentials, not extended in this fork.
 
 ## Tools
 

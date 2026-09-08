@@ -29,7 +29,8 @@ trees **plus each overload's own C# signature**, member listings.
   the snippets amount to 0–1 pyRevit/Python card per page. The official SDK `Examples`
   card *is* extracted, but only on request — `includeExamples: true`, off by default
   (I-05). Broader examples must come from elsewhere (web search, The Building Coder,
-  `search-library`); see §10 item 3 for what is actually available.
+  `search-library`); bundling a third-party example corpus into this server is
+  explicitly rejected — see the "Rejected" record in §10.
 
 **Why it exists at all:** the Revit API surface is enormous and niche, so models
 hallucinate classes, methods and even namespaces. A tool that returns the *actual*
@@ -56,7 +57,7 @@ raw HTML (~13x compression measured on `Autodesk.Revit.DB.Wall`).
 | Default branch | `master` (not `main`) |
 | Runtime | Deno 2.x (`deno --version` → 2.9.6 verified) |
 | Protocol | MCP over **stdio**, newline-delimited JSON-RPC |
-| `serverInfo` | name `revit-docs-mcp`, version `1.0.8` — hardcoded in `main.ts`, **bump it before every tag** (builds up to `v1.0.6` reported `1.0.0`, so clients could not tell them apart) |
+| `serverInfo` | name `revit-docs-mcp`, version `1.0.9` — hardcoded in `main.ts`, **bump it before every tag** (builds up to `v1.0.6` reported `1.0.0`, so clients could not tell them apart) |
 | Tools exposed | `search-docs`, `retrieve-doc`, `retrieve-docs` |
 | Tool gated | `search-library` — registered **only** if both `OPENAI_API_KEY` and `OPENAI_VECTOR_STORE_ID` are set (env or `-k` / `-v` flags) |
 | Doc sources | `rvtdocs.com` (primary, Search V2) + `revitapidocs.com` (secondary) |
@@ -121,11 +122,14 @@ files. Breaking these silently breaks their agents.
   wraps each page in `try/catch` so one unreachable page does not discard the pages
   already fetched. `retrieve-doc` (single page) *may* throw — that is intended.
 - **I-07 — stdout belongs to JSON-RPC only.** Never write logs to stdout from
-  `lib/` or `tools/`. Known existing debt: `main.ts` emits three informational lines
-  via `console.info` (`Using OpenAI API Key: …`, `Using Vector Store ID: …`,
-  `Revit API Docs MCP Server is running...`) which land on **stdout**. Lenient clients
-  (opencode) skip non-JSON lines; a strict client could fail the handshake. Do not add
-  more; the fix is to route them to `console.error`.
+  `lib/`, `tools/` or `main.ts`; every diagnostic goes to `console.error` (stderr).
+  A lenient client (opencode) skips non-JSON lines, but a strict one can fail the
+  handshake, so this is not cosmetic. **Verified clean since `v1.0.9`**: a stdio run
+  emits 4 JSON lines and 0 non-JSON lines on stdout, with all five diagnostics on
+  stderr. Never echo secret material either — not even a prefix: `main.ts` reports
+  `OpenAI API key: configured|not set`, because a client that keeps its server's
+  stderr would otherwise accumulate key fragments. The only legitimate stdout writer
+  is the `-h` help path, which exits before the transport starts.
 - **I-08 — No secrets in the repository.** OpenAI key and vector-store id come from
   environment variables or `-k` / `-v`. `.env` is gitignored; keep it that way.
 - **I-09 — Binaries are never committed.** `.gitignore` has `Rvt_Docs_MCP*`. Release
@@ -133,9 +137,9 @@ files. Breaking these silently breaks their agents.
 - **I-10 — Do not push tags without an explicit instruction.** Any tag matching `v*`
   triggers CI and **publishes a public release**. Tags `v1.0.0`–`v1.0.5` already exist
   (inherited from upstream at fork time, no assets), `v1.0.6` fixed the Search V2
-  breakage, `v1.0.7` added `includeExamples`, and `v1.0.8` carries the five usability
-  fixes that came out of a blind agent test (listed as done in §10) — `main.ts` already
-  reports `1.0.8`. Next version is `v1.0.9`.
+  breakage, `v1.0.7` added `includeExamples`, `v1.0.8` carries the five usability
+  fixes that came out of a blind agent test, and `v1.0.9` cleaned up stdout (I-07) —
+  `main.ts` already reports `1.0.9`. Next version is `v1.0.10`.
 
 ## 6. Build, verify, release — exact commands
 
@@ -175,7 +179,7 @@ p.stdout.on("data", (d) => {
   let i;
   while ((i = buf.indexOf("\n")) >= 0) {
     const line = buf.slice(0, i).trim(); buf = buf.slice(i + 1);
-    if (!line.startsWith("{")) continue;              // skip the informational lines (I-07)
+    if (!line.startsWith("{")) continue;              // safety net: stdout is pure JSON-RPC since v1.0.9 (I-07)
     const msg = JSON.parse(line);
     if (msg.id === 2) console.log("TOOLS:", msg.result.tools.map((t) => t.name).join(", "));
     if (msg.id === 3) console.log("SEARCH:", msg.result.content[0].text.slice(0, 200));
@@ -245,6 +249,18 @@ local build: the handshake reported `serverInfo.version` `1.0.8` and every numbe
 back identical. Do the same for the next release — the two builds differ in size
 (97,471,888 local vs 97,471,264 CI) and only a re-run proves they behave alike.
 
+**stdout purity check (`v1.0.9`+).** Count what the server writes to each stream during a
+short stdio session — `initialize` + `tools/list` + one `search-docs` + one `retrieve-doc`:
+
+- stdout must be **4 JSON lines and 0 non-JSON lines**;
+- stderr carries the diagnostics (`OpenAI API key: not set`, `Vector store ID: not set`,
+  the two `search-library` warnings, `Revit API Docs MCP Server is running...`);
+- the handshake must report `serverInfo.version` matching the tag.
+
+Measured on the `v1.0.9` build: stdout 4/0, stderr 5 lines, version `1.0.9`, and the
+`v1.0.8` behaviour baseline unchanged (search 3 results with `declaringType`, stub 548
+characters with `## Overload Signatures`).
+
 ### Verify inside a real client (opencode)
 
 Create `opencode.json` in any project, put the binary in `tools/`, then:
@@ -312,13 +328,13 @@ to be on `PATH` (the winget install does not create a shim).
 
 Bump the handshake version first — `McpServer({ name, version })` in `main.ts` must
 match the tag you are about to push (this is what lets a client tell builds apart), then
-rebuild and re-run the smoke client. `main.ts` currently reports `1.0.8`; the next version
-after `v1.0.8` is `v1.0.9`.
+rebuild and re-run the smoke client. `main.ts` currently reports `1.0.9`; the next version
+after `v1.0.9` is `v1.0.10`.
 
 ```bash
-git tag -a v1.0.9 -m "v1.0.9 - <what changed>"
+git tag -a v1.0.10 -m "v1.0.10 - <what changed>"
 git push origin master
-git push origin v1.0.9          # push the tag explicitly; --follow-tags would also work
+git push origin v1.0.10         # push the tag explicitly; --follow-tags would also work
 gh run list --repo Alexandrisius/Rvt_Docs_MCP --limit 3
 gh run watch <run-id> --repo Alexandrisius/Rvt_Docs_MCP --exit-status
 ```
@@ -350,7 +366,7 @@ CI builds all three targets (~1–2 min) and creates the release. **Two gotchas:
 | An entity that *should* be in the results is missing | the page-id twin rule matched too eagerly and a real entity was mistaken for a duplicate of a readable one | `memberNameOf` (it strips an overload's parameter list and the type word the secondary source appends to its titles) and the `twins.length === 1` guard in `dedupePageIdTwins`; compare against what the two sources returned before the dedupe |
 | Only one source's results | the other source is down — by design (I-06), a warning goes to stderr | `searchWrapper` |
 | `search-library` missing | `OPENAI_API_KEY` / `OPENAI_VECTOR_STORE_ID` not both set | `main.ts` |
-| Client handshake fails / hangs | non-JSON on stdout (I-07), or the OS blocked an unsigned binary | run the smoke client and look at raw stdout; on Windows check "Unblock" in file properties |
+| Client handshake fails / hangs | since `v1.0.9` stdout is pure JSON-RPC, so this is now almost always the OS blocking an unsigned binary, or a client that never sent `notifications/initialized` | run the purity check (§6): stdout must be 4 JSON lines and 0 non-JSON lines — any extra line means someone added a `console.log`/`console.info` (I-07); on Windows check "Unblock" in file properties |
 | Tools vanished mid-session, or a new parameter is silently ignored after a rebuild | the opencode service does not respawn a dead MCP child, and `opencode mcp list` still prints `✓ connected` because it spawns its own instance | toggle `enabled` false→true in `opencode.json` (see §6), or run `opencode2 service restart` — the latter kills every active session |
 | A specific `year` returns nothing | outside site coverage (2020–2027) | `lib/toolsCommon.ts` |
 | `retrieve-doc` on an overload fails | slug must be the exact string from search results, including the parenthesised parameter list | pass `url` from `search-docs` verbatim |
@@ -431,47 +447,44 @@ other.
 
 Ordered by value. Nothing here is started — pick it up only with an explicit instruction.
 
-1. **stdout hygiene (I-07)** — move the three `console.info` lines in `main.ts` to
-   stderr. Small change, removes a real interoperability risk with strict MCP clients.
-2. **Response caching / offline snapshot** — the top resilience risk: the project has
+1. **Response caching / offline snapshot** — the top resilience risk: the project has
    already been broken once by an upstream site change, and every call hits the
    network. A local cache (or a bundled snapshot for common entities) would survive the
    next migration. Upstream marked caching "unlikely"; that judgement predates the
    September 2026 breakage.
-3. **Code examples** — *stage A is done*: the official SDK example that ships with a
-   docs page is extracted behind `includeExamples: true` (measured on 24 live pages of
-   the 2025 docs: 12 have one, 154–3272 chars, ~350–450 tokens each). The remaining
-   stages, in order of value per unit of effort:
-   - **B — bundle `jeremytammik/the_building_coder_samples`** (MIT, ~3.4 MB, ~180
-     topic-named `Cmd*.cs` files, migrated to Revit 2025 / .NET 8, plus `BcSamples.txt`
-     as a ready-made title index). Small enough to embed with `deno compile --include`
-     or to download once into a cache dir; searchable offline by filename + identifiers,
-     no keys, no embeddings. This is the best code asset available.
-   - **C — The Building Coder prose.** Typepad was discontinued in August 2025 and
-     `thebuildingcoder.typepad.com` now 302-redirects to networksolutions.com — do not
-     build anything against that domain. The blog lives on as
-     `jeremytammik.github.io/tbc/a/` (repo `jeremytammik/tbc`, branch `gh-pages`, MIT).
-     Two cheap entry points: the complete post index in a single 577 KB
-     `/tbc/a/index.html` (`number | date | title | slug` for all 2081 posts) and a
-     public Pagefind index (`/tbc/a/pagefind/pagefind-entry.json`, `page_count: 2077`,
-     v1.5.2). A typical post is ~14 KB HTML with ~19 code blocks → ~2–2.5k tokens of
-     markdown. Autodesk also mirrors the archive up to August 2025 on `blog.autodesk.io`.
-   - **D — skip** a hand-written Pagefind shard client (format is versioned and fragile)
-     and skip extending the OpenAI vector-store path: both cost more than they return.
-   - `jeremytammik/RevitSdkSamples` is MIT but 1.8 GB — only ever an optional local
-     clone, never a bundled asset.
-   - A promising alternative to all of the above is a store of *verified* snippets
-     contributed by agents after a successful run. Must stay opt-in per call.
-4. **No Linux target** in the CI matrix (`windows`, `macos-x64`, `macos-arm64` only).
-5. **No automated tests.** The stdio smoke client in §6 is a candidate for a
+2. **No Linux target** in the CI matrix (`windows`, `macos-x64`, `macos-arm64` only).
+3. **No automated tests.** The stdio smoke client in §6 is a candidate for a
    `deno task smoke` that runs against a recorded fixture, so regressions in
    `extractDocs.ts` are caught without depending on a live site.
-6. **Upstream PR** for [kaitpw/Rvt_Docs_MCP#3](https://github.com/kaitpw/Rvt_Docs_MCP/issues/3)
+4. **Upstream PR** for [kaitpw/Rvt_Docs_MCP#3](https://github.com/kaitpw/Rvt_Docs_MCP/issues/3)
    — offered, not merged.
 
+### Rejected — do not propose or implement again
+
+**Bundling or indexing third-party code examples is permanently out of scope for this
+fork** (maintainer decision, 2026-09-08). That covers every variant that was researched:
+embedding `jeremytammik/the_building_coder_samples` (MIT, ~3.4 MB, ~180 `Cmd*.cs` files),
+indexing `jeremytammik/RevitSdkSamples` (MIT but 1.8 GB), scraping The Building Coder
+prose, extending the OpenAI vector-store path, and a store of agent-contributed
+"verified snippets". The only examples support is `includeExamples` — the official SDK
+sample that ships with the documentation page itself.
+
+Why: a bundled corpus turns a stateless scraper into a dataset with licensing,
+staleness and retrieval-quality obligations that nobody here will maintain, and "find me
+a real-world example" is already served better by web search than by a frozen snapshot.
+
+Research kept so it is not repeated: The Building Coder left Typepad (shut down August
+2025; `thebuildingcoder.typepad.com` now 302-redirects to a parking page — never build
+against that domain) and lives on at `jeremytammik.github.io/tbc/a/` (repo
+`jeremytammik/tbc`, branch `gh-pages`, MIT) with a 577 KB post index and a public
+Pagefind index; a hand-written Pagefind shard client was judged too fragile for the
+value. `search-library` stays as-is: gated, optional, upstream's design.
+
 Done and removed from this list: the `serverInfo.version` bump (was hardcoded to
-`1.0.0`, now matches the release and is part of the §6 release checklist), and the five
-usability items shipped in `v1.0.8`.
+`1.0.0`, now matches the release and is part of the §6 release checklist), the five
+usability items shipped in `v1.0.8`, and stdout hygiene (I-07) shipped in `v1.0.9` —
+all diagnostics moved to stderr and the OpenAI key is no longer echoed, not even as a
+prefix.
 
 **Where those five came from — a blind test.** An agent with zero context was given a real
 Revit task (rotate a column 45° around Z, check whether it is pinned, inside a transaction)

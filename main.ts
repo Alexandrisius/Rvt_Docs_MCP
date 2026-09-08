@@ -84,8 +84,12 @@ async function main() {
   // Validate required environment variables
   const apiKey = Deno.env.get("OPENAI_API_KEY");
   const vectorStoreId = Deno.env.get("OPENAI_VECTOR_STORE_ID");
-  console.info(`Using OpenAI API Key: ${apiKey?.substring(0, 8)}...`);
-  console.info(`Using Vector Store ID: ${vectorStoreId}`);
+  // stdout carries JSON-RPC and nothing else (I-07): every diagnostic goes to
+  // stderr, where a client can log it without tripping over its parser. The key
+  // is never echoed, not even as a prefix - a client that keeps its server's
+  // stderr would otherwise accumulate key material.
+  console.error(`OpenAI API key: ${apiKey ? "configured" : "not set"}`);
+  console.error(`Vector store ID: ${vectorStoreId ?? "not set"}`);
 
   if (!apiKey) {
     console.warn(
@@ -103,20 +107,20 @@ async function main() {
     name: "revit-docs-mcp",
     // Bump this with every release: it is the only way an MCP client can tell
     // builds apart during the handshake (builds up to v1.0.6 reported 1.0.0).
-    version: "1.0.8",
+    version: "1.0.9",
   });
 
   createSearchDocs(server);
   createRetrieveDocs(server);
   createRetrieveDoc(server);
   if (apiKey && vectorStoreId) {
-    console.info("✅ search-library tool enabled");
+    console.error("✅ search-library tool enabled");
     createSearchLibrary(server);
   }
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.info("Revit API Docs MCP Server is running...");
+  console.error("Revit API Docs MCP Server is running...");
 }
 
 main().catch((error) => {

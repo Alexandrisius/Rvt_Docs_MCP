@@ -65,7 +65,7 @@ npm install -g @opencode/cli        # опционально: бета V2 (ко�
 ### Вариант A — скачать готовый exe (быстро, РЕКОМЕНДУЕТСЯ)
 
 1. Открой **<https://github.com/Alexandrisius/Rvt_Docs_MCP/releases>**
-2. Возьми последний релиз (**`v1.0.7`** или новее) и скачай ассет
+2. Возьми последний релиз (**`v1.0.9`** или новее) и скачай ассет
    **`Rvt_Docs_MCP-windows.exe`** (~93 МБ).
    Для macOS: `Rvt_Docs_MCP-macos-arm64` (Apple Silicon) или `Rvt_Docs_MCP-macos-x64` (Intel).
 3. Релиз собран GitHub Actions форка из того же кода, что и при ручной сборке, —
@@ -75,6 +75,11 @@ npm install -g @opencode/cli        # опционально: бета V2 (ко�
 > удаление page-id-дубликатов, секция `## Overload Signatures` на страницах-заглушках и
 > подсказка slug'а при 404 унаследованного члена), появилось в **`v1.0.8`**. На `v1.0.7`
 > этих полей и секций не будет — всё остальное работает так же.
+>
+> Начиная с **`v1.0.9`** stdout сервера содержит только JSON-RPC: вся диагностика
+> (статус ключей, предупреждения, «server is running») уходит в stderr, а OpenAI-ключ
+> больше не эхо-ится даже префиксом. Для opencode ничего не меняется, но строгие
+> MCP-клиенты больше не спотыкаются о посторонние строки.
 
 Проверить, что скачал не апстрим: в релизе форка три ассета и тег `v1.0.6`+;
 в апстриме теги `v1.0.0`…`v1.0.5` от августа 2025.
@@ -514,7 +519,7 @@ opencode mcp list        # ожидаем: revit-api-docs В СПИСКЕ НЕТ
 | `Invalid arguments ... queryString: Missing key` | в `retrieve-docs` передали список URL | `retrieve-docs` принимает `queryString` (поиск+выдача), для конкретного slug — `retrieve-doc` |
 | Поиск возвращает пустой/мусорный список | `queryString` задан фразой | только имена сущностей: `Wall`, `Class.Member` |
 | `FileNotFoundException` / SmartScreen блокирует exe | защита Windows против неподписанного бинарника | свойства файла → «Разблокировать»; или собери exe сам (§2B) |
-| Сервер подключается, но строгой MCP-клиент рвёт handshake | сервер печатает инфо-строки в stdout (`console.info` в `main.ts`) | opencode это переносит нормально; для другого клиента — убрать/перенаправить вывод в stderr |
+| Сервер подключается, но строгий MCP-клиент рвёт handshake | **исправлено в `v1.0.9`**: раньше сервер печатал инфо-строки в stdout (`console.info` в `main.ts`). Если симптом вернулся — кто-то снова написал в stdout | обнови exe до `v1.0.9`+; проверка: за короткую stdio-сессию на stdout должно быть 4 JSON-строки и 0 посторонних, вся диагностика — в stderr |
 | В другом репозитории сервера нет | так и задумано: конфиг проектный | скопируй `opencode.json` туда или пропиши в глобальном конфиге |
 | `git push` отклонён: файл >100 МБ | exe попал в git | добавь `*.exe` в `.gitignore`, `git rm --cached tools/Rvt_Docs_MCP-windows.exe`, коммит заново |
 
@@ -645,7 +650,8 @@ git ls-files "*.exe"                               # пусто
 | Относительный путь в конфиге работает | проверено `opencode mcp list` → `connected`, 08.09.2026 |
 | Инструкция проверена end-to-end | команды §3–§6 выполнены дословно в пустой тестовой папке: BOM = `123,10,32`, `git check-ignore` → `.gitignore:1:*.exe`, `git ls-files "*.exe"` → пусто, `opencode mcp list` → `✓ revit-api-docs connected` |
 | CI-артефакт релиза `v1.0.6` рабочий | скачанный `Rvt_Docs_MCP-windows.exe` (97 433 508 байт) проверен прямым MCP-stdio-клиентом: `initialize` → `revit-docs-mcp v1.0.0`, `tools/list` → `search-docs, retrieve-docs, retrieve-doc`, `search-docs "Wall"` → slug'и, `retrieve-doc` перегрузки `Wall.Create` → 2 425 симв. с Parameters / Exceptions / Return Value / C#-синтаксисом / Overloads |
-| Сборки различимы начиная с `v1.0.7` | `main.ts` → `McpServer({ name: "revit-docs-mcp", version: ... })`: с `v1.0.7` там настоящая версия релиза, сейчас — `1.0.8`. CI-артефакт `v1.0.6` в строке выше всё ещё отвечал `1.0.0` — именно поэтому версию надо поднимать перед каждым тегом |
+| Сборки различимы начиная с `v1.0.7` | `main.ts` → `McpServer({ name: "revit-docs-mcp", version: ... })`: с `v1.0.7` там настоящая версия релиза, сейчас — `1.0.9`. CI-артефакт `v1.0.6` в строке выше всё ещё отвечал `1.0.0` — именно поэтому версию надо поднимать перед каждым тегом |
+| stdout чистый начиная с `v1.0.9` | замер на сборке `v1.0.9` через прямой stdio-клиент: `initialize` + `tools/list` + `search-docs` + `retrieve-doc` дали на stdout **4 JSON-строки и 0 посторонних**, на stderr — 5 диагностических (`OpenAI API key: not set`, `Vector store ID: not set`, два предупреждения про `search-library`, `Revit API Docs MCP Server is running...`). Ключ больше не эхо-ится даже префиксом. Поведение `v1.0.8` не изменилось: поиск `RotateElement` → 3 результата с `declaringType`, заглушка `Transaction.Start` → 548 симв. с `## Overload Signatures` |
 | CI-артефакт релиза `v1.0.7` рабочий | скачанный `Rvt_Docs_MCP-windows.exe` (97 441 696 байт) проверен прямым MCP-stdio-клиентом 08.09.2026: `initialize` → `revit-docs-mcp v1.0.7`, `tools/list` → `search-docs, retrieve-docs, retrieve-doc`, схема `retrieve-doc` → `["urlSlug","includeExamples"]` с `includeExamples` по умолчанию `false`, перегрузка `Wall.Create` → 2 425 симв. без флага (идентично `v1.0.6`) и 2 970 симв. с `includeExamples: true` |
 | Пять правок удобства `v1.0.8` выросли из «слепого» теста | 08.09.2026: агенту без контекста дали реальную задачу Revit (повернуть колонну на 45° вокруг Z, проверить pinned, внутри транзакции) и ничего не подсказывали про инструменты. Он оценил набор на 7,5/10 (`search-docs` 8,5, `retrieve-doc` 6,5), решил задачу, не выдумав ни одной сигнатуры, и назвал ровно те пять проблем, которые закрыты строками ниже |
 | Формат `urlSlug` описан в самом параметре | `lib/toolsCommon.ts` → `toolValidators.urlSlug` `.describe(...)`: копировать `url` из результата `search-docs` дословно, ведущий слэш необязателен, `/<year>/<Namespace>.<Type>` для класса и `/<year>/<Namespace>.<Type>.<Member>` для члена, конкретная перегрузка — её список параметров как показан |
