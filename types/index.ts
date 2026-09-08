@@ -4,6 +4,14 @@ export interface SearchResult {
   namespace?: string;
   type: string;
   url: string;
+  /**
+   * Type that declares the member, when the source reports it. Lets an agent
+   * address an inherited member on its declaring type instead of guessing why
+   * "LocationPoint.Rotate" does not exist.
+   */
+  declaringType?: string;
+  /** Only set when true, so the common case carries no extra noise. */
+  isObsolete?: boolean;
 }
 
 export interface SearchResponseRvtDocsCom {

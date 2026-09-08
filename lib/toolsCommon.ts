@@ -33,7 +33,9 @@ export const toolDescriptions = {
 
 **Notes:**
 - You MUST first use the "${toolNames.searchDocs}" tool to get the URL slug. An incorrect slug will cause an error.
-- Set includeExamples to true to also get the official C# code example of the page (when it has one). Off by default because it roughly doubles the response size.`,
+- Set includeExamples to true to also get the official C# code example of the page (when it has one). Off by default because it roughly doubles the response size.
+- A member with overloads returns the overload list plus every overload's C# signature, so there is no need to call this tool once per overload just to see them.
+- An inherited member has no page of its own ("LocationPoint.Rotate" does not exist, "Location.Rotate" does). Such a 404 comes back with the slug to try instead.`,
   retrieveDocs:
     `Retrieves full documentation content for multiple Revit API entities based on a search query.
 
@@ -52,7 +54,10 @@ export const toolDescriptions = {
 **Notes:**
 - API documentation varies between version years (2025+ includes member info in Class pages)
 - Some entities may be deprecated between version years
-- Search results may have slight variations in formatting`,
+- Search results may have slight variations in formatting
+- A member result also carries "declaringType" - the type that declares it. Use it when the member is inherited, because its page lives on the declaring type, not on the class you searched for.
+- "isObsolete" appears only on deprecated entities; prefer a non-obsolete alternative when it is set.
+- Results are deduplicated: the same entity is indexed both by readable slug and by page id, and the readable one (which has a description) wins.`,
   searchLibrary:
     `Searches a comprehensive library of Revit API resources including The Building Coder blog posts, C# code examples, PDF resources, and practical guides.
 
@@ -67,7 +72,9 @@ export const toolDescriptions = {
 export const toolValidators = {
   urlSlug: z
     .string()
-    .describe("URL slug of the Revit API documentation page to retrieve"),
+    .describe(
+      `URL slug of the Revit API documentation page to retrieve. Copy it verbatim from the "url" field of a ${toolNames.searchDocs} result; the leading slash is optional. Shape: "/<year>/<Namespace>.<Type>" for a class, "/<year>/<Namespace>.<Type>.<Member>" for a member. To open one specific overload, append its parameter list exactly as shown, e.g. "/2025/Autodesk.Revit.DB.Wall.Create(Document,Curve,ElementId,Boolean)".`,
+    ),
   year: z.number().min(2020).max(2027).default(2025)
     .describe("Revit API documentation year version (2020-2027)"),
   maxResults: z.number().min(1).max(50).optional().default(10)
@@ -80,7 +87,9 @@ export const toolValidators = {
     ...SearchResultTypes,
   ])
     .describe(
-      `Filter results by type: ${SearchResultTypes.join(", ")}`,
+      `Filter results by entity type: ${SearchResultTypes.join(", ")}. ` +
+        `Singular values (Class, Method, Property, Constructor, Interface, Enumeration) match individual API pages. ` +
+        `Plural values (Methods, Properties) match a class's whole member-listing page and are only returned for some classes, so they are NOT a reliable way to enumerate members - retrieve the Class page instead: its Methods and Properties tables list every member, including the type each one is declared on.`,
     ),
   queryString: z
     .string()

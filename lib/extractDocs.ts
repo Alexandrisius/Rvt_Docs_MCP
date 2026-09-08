@@ -103,6 +103,13 @@ export async function extractRvtDocsText(
     }
   }
 
+  // A member with several overloads renders as a stub: it lists them but shows
+  // no signatures, which used to cost a consumer one extra round trip per
+  // overload before it could see them.
+  if (isOverloadsStub(headline)) {
+    markdown += await extractOverloadSignatures(mainContent, url);
+  }
+
   return markdown.replace(/\n{3,}/g, "\n\n").trim();
 }
 
@@ -205,6 +212,198 @@ function extractHierarchy(hierarchy: Element): string {
 
   if (merged.length === 0) return "";
   return `## ${label}\n\n${merged.join("\n")}\n\n`;
+}
+
+/**
+ * How many overload pages a stub may expand into. Members with more overloads
+ * than this are rare, and every one costs a fetch plus a syntax block.
+ */
+const MAX_OVERLOAD_PAGES = 10;
+
+/**
+ * True when the page is an overloads stub rather than a real member page. The
+ * site says so in the breadcrumb's page-type chip.
+ */
+function isOverloadsStub(headline: Element): boolean {
+  const pageType = find(headline, (el) => hasClass(el, "crumb-pagetype"));
+  return pageType !== null &&
+    cleanText(getText(pageType)).toLowerCase() === "overloads";
+}
+
+/**
+ * Expands an overloads stub with each overload's C# signature.
+ *
+ * The links are read from the page instead of being reconstructed, because a
+ * parameterless overload lives at a hashed slug
+ * ("/2025/Autodesk.Revit.DB.Transaction.Start-1146fa87") that cannot be derived
+ * from the member name. One unreachable overload is skipped rather than fatal,
+ * so a stub still returns whatever it managed to collect.
+ */
+async function extractOverloadSignatures(
+  mainContent: Element,
+  pageUrl: string,
+): Promise<string> {
+  const url = new URL(pageUrl);
+  const basePath = url.pathname;
+
+  const seen = new Set<string>();
+  const links: { label: string; href: string }[] = [];
+  for (const anchor of findAll(mainContent, (el) => el.nodeName === "a")) {
+    const href = (getAttr(anchor, "href") ?? "").split("#")[0];
+    // Overloads of this member are exactly the links extending its own path:
+    // "...Start(String)" for parameterised ones, "...Start-<hash>" for the rest.
+    if (!href.startsWith(`${basePath}(`) && !href.startsWith(`${basePath}-`)) {
+      continue;
+    }
+    if (seen.has(href)) continue;
+    seen.add(href);
+    links.push({ label: cleanText(getText(anchor)), href });
+  }
+  if (links.length === 0) return "";
+
+  const picked = links.slice(0, MAX_OVERLOAD_PAGES);
+  const settled = await Promise.allSettled(
+    picked.map((link) => fetchSyntaxBlock(`${url.origin}${link.href}`)),
+  );
+
+  let signatures = "";
+  settled.forEach((result, index) => {
+    if (result.status !== "fulfilled" || result.value === null) return;
+    const { label } = picked[index];
+    signatures +=
+      `### ${label.includes("(") ? label : `${label}()`}\n\n${result.value}\n\n`;
+  });
+  if (signatures === "") return "";
+
+  if (links.length > picked.length) {
+    signatures +=
+      `_…and ${links.length - picked.length} more overload(s), not expanded._\n\n`;
+  }
+  return `## Overload Signatures\n\n${signatures}`;
+}
+
+/**
+ * Fetches a page and returns only its Syntax code block, or null. The signature
+ * is the single thing an overloads stub is missing, so nothing else is worth the
+ * tokens here.
+ */
+async function fetchSyntaxBlock(url: string): Promise<string | null> {
+  const response = await fetch(url);
+  if (!response.ok) return null;
+
+  const doc = parse(await response.text());
+  const htmlElement = findElement(
+    doc.childNodes,
+    (node) => node.nodeName === "html",
+  );
+  if (!htmlElement) return null;
+  const mainContent =
+    findElementAfterComment(htmlElement, "Main content") ?? htmlElement;
+
+  const label = findAll(mainContent, (el) => hasClass(el, "card-toolbar-label"))
+    .find((el) => cleanText(getText(el)).toLowerCase() === "syntax");
+  if (!label) return null;
+  const card = findParent(label, (el) => hasClass(el, "card"));
+  if (!card) return null;
+
+  const snippets = findAll(
+    card,
+    (el) => hasClass(el, "code-snippet") && !hasClass(el, "hidden"),
+  );
+  for (const snippet of snippets) {
+    const codeElement = find(snippet, (el) => el.nodeName === "code");
+    if (!codeElement) continue;
+    const code = cleanCode(getText(codeElement));
+    if (!code) continue;
+    const language = languageFromCodeClass(getAttr(codeElement, "class") ?? "");
+    return `\`\`\`${language}\n${code}\n\`\`\``;
+  }
+  return null;
+}
+
+/**
+ * Suggests the slug of an inherited member.
+ *
+ * "LocationPoint.Rotate" has no page of its own: Rotate is declared on Location.
+ * The class page says so in the "Inherited From" column of its member tables, so
+ * look there and hand back a slug that resolves. Best effort by design - any
+ * failure returns null and the caller falls back to the plain error message.
+ */
+export async function suggestInheritedMemberSlug(
+  pageUrl: string,
+): Promise<string | null> {
+  try {
+    const url = new URL(pageUrl);
+    const segments = url.pathname.split("/").filter((segment) => segment !== "");
+    if (segments.length < 2) return null;
+
+    const year = segments[0];
+    const entityPath = decodeURIComponent(segments[segments.length - 1]);
+    // Only "<Type>.<Member>" can be an inheritance problem; overloads and hashed
+    // slugs are handled elsewhere.
+    if (!entityPath.includes(".") || entityPath.includes("(")) return null;
+
+    const member = entityPath.split(".").pop() ?? "";
+    const typePath = entityPath.slice(0, entityPath.length - member.length - 1);
+    if (!member || !typePath) return null;
+
+    const classMarkdown = await extractRvtDocsText(
+      `${url.origin}/${year}/${typePath}`,
+    );
+
+    const declaringType = findInheritedFrom(classMarkdown, member);
+    if (!declaringType) return null;
+    if (declaringType === typePath.split(".").pop()) return null;
+
+    const namespace =
+      classMarkdown.match(/\*\*Namespace:\*\*\s*(\S+)/)?.[1] ?? "";
+    return `/${year}/${namespace ? `${namespace}.` : ""}${declaringType}.${member}`;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Reads the "Inherited From" cell of a member's row in a class page's markdown.
+ * That column only exists in some years, so the header decides whether the last
+ * cell is a type name or merely the description - guessing here would produce a
+ * confidently wrong slug.
+ */
+function findInheritedFrom(
+  classMarkdown: string,
+  member: string,
+): string | null {
+  const escaped = member.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const rowPattern = new RegExp(`^[MP]\\s+${escaped}\\s*(?:\\(|$)`);
+
+  let inTable = false;
+  let inheritedColumn = -1;
+
+  for (const line of classMarkdown.split("\n")) {
+    if (!line.startsWith("|")) {
+      inTable = false;
+      inheritedColumn = -1;
+      continue;
+    }
+
+    const cells = line.split("|").slice(1, -1).map((cell) => cell.trim());
+    if (cells.every((cell) => cell === "" || /^-{3,}$/.test(cell))) continue;
+
+    if (!inTable) {
+      inTable = true;
+      inheritedColumn = cells.findIndex((cell) =>
+        /^Inherited From$/i.test(cell)
+      );
+      continue;
+    }
+
+    if (inheritedColumn < 0 || cells.length <= inheritedColumn) continue;
+    if (!rowPattern.test(cells[0])) continue;
+
+    const declaringType = cells[inheritedColumn];
+    if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(declaringType)) return declaringType;
+  }
+  return null;
 }
 
 /**

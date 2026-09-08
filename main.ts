@@ -103,7 +103,7 @@ async function main() {
     name: "revit-docs-mcp",
     // Bump this with every release: it is the only way an MCP client can tell
     // builds apart during the handshake (builds up to v1.0.6 reported 1.0.0).
-    version: "1.0.7",
+    version: "1.0.8",
   });
 
   createSearchDocs(server);

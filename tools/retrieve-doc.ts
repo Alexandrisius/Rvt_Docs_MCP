@@ -1,5 +1,5 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { extractRvtDocsText } from "../lib/extractDocs.ts";
+import { extractRvtDocsText, suggestInheritedMemberSlug } from "../lib/extractDocs.ts";
 import {
   toolDescriptions,
   toolNames,
@@ -39,11 +39,22 @@ export function createRetrieveDoc(server: McpServer) {
           ? error.message
           : "Unknown error occurred";
 
+        // A 404 on "<Type>.<Member>" usually means the member is inherited and
+        // therefore documented on its declaring type ("LocationPoint.Rotate" does
+        // not exist, "Location.Rotate" does). Hand back a slug that works instead
+        // of leaving the consumer to guess; if the lookup fails, say nothing.
+        const inheritedSlug = errorMessage.includes("404")
+          ? await suggestInheritedMemberSlug(fullUrl)
+          : null;
+
         return {
           content: [{
             type: "text",
             text:
-              `Error extracting documentation from ${fullUrl}: ${errorMessage}`,
+              `Error extracting documentation from ${fullUrl}: ${errorMessage}` +
+              (inheritedSlug
+                ? `\n\nThis member is likely declared on a base type. Try: ${inheritedSlug}`
+                : ""),
           }],
         };
       }
