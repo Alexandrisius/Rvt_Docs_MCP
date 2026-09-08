@@ -176,7 +176,7 @@ servers. Keep the executable out of git (it is ~93 MB and GitHub blocks files ov
 
 For a detailed step-by-step walkthrough — prerequisites, getting the binary,
 config, `.gitignore`, verification, in-session smoke tests with expected output, a
-12-row troubleshooting table and a ready-to-paste `AGENTS.md` block that stops the
+11-row troubleshooting table and a ready-to-paste `AGENTS.md` block that stops the
 agent from misusing the tools — see
 [`docs/INSTALL-opencode-ru.md`](docs/INSTALL-opencode-ru.md) (Russian).
 
