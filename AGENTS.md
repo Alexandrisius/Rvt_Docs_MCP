@@ -317,6 +317,43 @@ users run both the legacy `opencode` (1.18.x) and the OpenCode 2.0 preview `open
   problem. Free the file first (`opencode2 service restart`, or kill just that MCP
   child), then swap it, then toggle `enabled`.
 
+**Who is holding the binary, and why closing the UI does not release it.** The V2
+daemon is a single per-user background process (`opencode2.exe serve --service`) that
+owns **one MCP child per project directory** that has the server configured. Observed
+live on 2026-09-08 with one TUI window open:
+
+```
+opencode2.exe  74164  serve --service          <- the daemon, survives closing the TUI
+ ├─ Rvt_Docs_MCP-windows.exe  29212  D:\...\Rvt_Docs_MCP\         <- fork repo project
+ └─ Rvt_Docs_MCP-windows.exe  39584  D:\...\AGK-SmartCon-Pro\tools\ <- SmartCon project
+opencode2.exe  74192                            <- the TUI you actually see
+```
+
+So two locked copies of the binary with one visible window is normal, and closing the
+window kills only the TUI. Find and free them like this:
+
+```powershell
+# which children exist and which project each belongs to
+Get-CimInstance Win32_Process -Filter "Name LIKE 'Rvt_Docs_MCP%'" |
+  Select-Object ProcessId, ParentProcessId, CreationDate, ExecutablePath
+
+opencode2 service status            # prints the daemon URL when it is alive
+
+# free ONE project's binary (daemon and other projects keep working)
+Get-CimInstance Win32_Process -Filter "Name LIKE 'Rvt_Docs_MCP%'" |
+  Where-Object ExecutablePath -eq 'D:\path\to\tools\Rvt_Docs_MCP-windows.exe' |
+  ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
+
+# or free everything at once, then bring the daemon back
+opencode2 service stop ; opencode2 service start
+```
+
+After the swap, toggle `"enabled": false` → `true` in that project's `opencode.json`:
+the daemon does **not** respawn a child it did not kill itself. Two more sources of a
+transient lock: `opencode mcp list` (V1) spawns its own short-lived instance of the
+binary, and `deno compile --output <same name>` fails with `Access is denied` while a
+child is running — compile to a different name (`Rvt_Docs_MCP-test.exe`) and swap after.
+
 This repository ships its own root-level `opencode.json` for dogfooding: it points at
 `./Rvt_Docs_MCP-windows.exe`, i.e. exactly the artifact the build command above
 produces. The config is committed, the binary is not (`Rvt_Docs_MCP*` in
