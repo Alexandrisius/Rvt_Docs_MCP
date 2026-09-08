@@ -251,6 +251,11 @@ Alexandrisius/Rvt_Docs_MCP: deno compile -A --output Rvt_Docs_MCP-windows.exe ma
 
 > ⚠️ **Restart opencode.** Already-open sessions pick up a new MCP server only after a
 > restart. This is the number one cause of "I did everything and there are no tools".
+> In opencode 2.x a background service (`opencode2.exe serve --service`) owns the MCP
+> processes and survives closing the window or the editor. If a restart does not help,
+> toggle `"enabled": false` → `true` in `opencode.json`: the service re-reads the config
+> and spawns the server again. And do not trust `opencode mcp list` alone — it creates
+> its own instance, so it can show `✓ connected` while your session has no tools.
 
 ```powershell
 cd C:\path\to\YOUR-REPOSITORY
@@ -425,11 +430,14 @@ explicitly ask for it (`includeExamples: true`).**
 |---|---|---|
 | `404 Not Found` from `search-docs` | the site changed its search API again | rebuild the exe from the current fork |
 | `Main content section not found` from `retrieve-doc` | the site's pages were re-templated again | same |
-| Tools are visible but fail when called; the server shows "connected" | an old exe is installed (builds older than 2026-09) | rebuild the exe, restart opencode |
+| Tools are visible but fail when called; the server shows "connected" | an old exe is installed (builds older than 2026-09) | rebuild the exe, then toggle `"enabled"` in `opencode.json` — a window restart alone may not be enough |
 | You cannot tell which build is actually running | up to `v1.0.6` the handshake always reported `serverInfo.version: 1.0.0` | from `v1.0.7` the server reports its real version — check `initialize` → `serverInfo.version` |
+| The MCP tools disappeared from the session after you replaced the exe or killed the process | opencode 2.x keeps a background service (`opencode2.exe serve --service`) that owns the MCP processes; it does **not** restart a dead one, and restarting the window does not restart the service | toggle `"enabled": false` → `true` in `opencode.json` and wait a few seconds. Do not trust `opencode mcp list`: it spawns its own instance and shows `✓ connected` even when your session's server is dead |
 
 Rebuild: `git pull` in the fork clone → `deno compile -A --output Rvt_Docs_MCP-windows.exe main.ts`
-→ replace the exe in `tools/` → restart opencode.
+→ stop the running MCP process (Windows locks a running exe: overwriting it fails with
+`Access is denied`) → replace the exe in `tools/` → toggle `"enabled"` in `opencode.json`
+to make the service spawn it again.
 
 ### The `search-library` tool is missing — that is normal
 
@@ -445,7 +453,7 @@ both `OPENAI_API_KEY` **and** `OPENAI_VECTOR_STORE_ID` are present. Without them
 | Symptom | Cause | What to do |
 |---|---|---|
 | `opencode mcp list` → `✗ revit-api-docs failed` | wrong path to the exe / the exe is not in place | `dir tools` — is the file there? Does the name match the config? Try an absolute path with `\\` |
-| No tools in the session even though `mcp list` is green | the session was started before the config was created | **restart opencode** (close it and open it again) |
+| No tools in the session even though `mcp list` is green | the session was started before the config was created, or the background service still holds a dead MCP child | **restart opencode** (close it and open it again); if that does not help, toggle `"enabled": false` → `true` in `opencode.json` — the `serve --service` process survives closing the window |
 | `deno` — "is not recognized as a command" | the terminal was opened before Deno was installed | open a **new** terminal; or call the exe by its full path from WinGet Packages |
 | `search-docs` → `404 Not Found` | an old exe (pre-Search V2) | rebuild from the Alexandrisius fork (§2B) |
 | `retrieve-doc` → `Main content section not found` | the site moved again | check the fork for new commits, rebuild; notify the maintainer |

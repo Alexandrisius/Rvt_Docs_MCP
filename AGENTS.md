@@ -221,8 +221,30 @@ opencode mcp list     # expect: ✓ revit-api-docs connected
 ```
 
 Project-relative paths resolve from the project root, so this config is committable
-while the binary stays untracked. **Restart the client after editing the config** —
-running sessions do not pick up new servers.
+while the binary stays untracked.
+
+**How opencode actually picks the server up** (learned the hard way on 2026-09-08,
+opencode `1.18.29` — all of it verified, not assumed):
+
+- opencode 2.x is client/server: a background `opencode2.exe serve --service` process
+  owns the sessions *and* the MCP child processes. Closing the TUI window or VS Code
+  does **not** restart that service, so it keeps serving a stale MCP state.
+- A **dead MCP child is not respawned.** If you kill `Rvt_Docs_MCP-windows.exe` (or
+  replace the exe under it), the tools simply disappear from running sessions and never
+  come back on their own.
+- The reliable reload is a **config toggle**: set `"enabled": false` in
+  `opencode.json`, save, then set it back to `true`. The service re-reads the config and
+  spawns a fresh child from the current binary. Give it a few seconds — checking
+  immediately shows nothing and leads to the wrong conclusion.
+- **`opencode mcp list` is not proof.** It creates its own instance, connects to the exe
+  anew and happily prints `✓ revit-api-docs connected` while the server behind your
+  actual session is dead.
+- `opencode service restart` / `service status` exist only in newer builds; `1.18.29`
+  has neither. The fallback there is to stop the `serve --service` process — which also
+  kills every active session — and start opencode again.
+- Windows locks a running executable image: overwriting or deleting it fails with
+  `Access is denied` (not "file in use"), which is easy to misread as a permissions
+  problem. Stop the MCP child first, then swap the file, then toggle `enabled`.
 
 This repository ships its own root-level `opencode.json` for dogfooding: it points at
 `./Rvt_Docs_MCP-windows.exe`, i.e. exactly the artifact the build command above
@@ -269,6 +291,7 @@ CI builds all three targets (~1–2 min) and creates the release. **Two gotchas:
 | Only one source's results | the other source is down — by design (I-06), a warning goes to stderr | `searchWrapper` |
 | `search-library` missing | `OPENAI_API_KEY` / `OPENAI_VECTOR_STORE_ID` not both set | `main.ts` |
 | Client handshake fails / hangs | non-JSON on stdout (I-07), or the OS blocked an unsigned binary | run the smoke client and look at raw stdout; on Windows check "Unblock" in file properties |
+| Tools vanished mid-session, or a new parameter is silently ignored after a rebuild | the opencode service does not respawn a dead MCP child, and `opencode mcp list` still prints `✓ connected` because it spawns its own instance | toggle `enabled` false→true in `opencode.json` (see §6); last resort is stopping the `serve --service` process, which kills active sessions |
 | A specific `year` returns nothing | outside site coverage (2020–2027) | `lib/toolsCommon.ts` |
 | `retrieve-doc` on an overload fails | slug must be the exact string from search results, including the parenthesised parameter list | pass `url` from `search-docs` verbatim |
 | `includeExamples: true` but no `## Examples` in the response | either the page genuinely has no example (~50% of pages do not), or the card was renamed | `extractSection` in `lib/extractDocs.ts` — it matches the label `Examples` and the class `example-code-snippet` (distinct from the Syntax card's `code-snippet`), plus `data-tab-index="C#-n"` to pick the C# tab |
