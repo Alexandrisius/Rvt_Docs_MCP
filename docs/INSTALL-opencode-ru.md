@@ -349,15 +349,17 @@ opencode mcp list        # ожидаем: revit-api-docs В СПИСКЕ НЕТ
 В проекте подключён локальный MCP-сервер `revit-api-docs`
 (форк <https://github.com/Alexandrisius/Rvt_Docs_MCP>, exe в `tools/`, конфиг в `opencode.json`).
 Сервер парсит `rvtdocs.com` + `revitapidocs.com` и возвращает справку Revit API в
-компактном markdown. **Собственных знаний у него нет, примеры кода он не отдаёт,
-работает только онлайн.**
+компактном markdown. **Собственных знаний у него нет, работает только онлайн;
+единственный код, который он отдаёт, — официальный пример со страницы доков,
+и только по явному запросу (`includeExamples: true`).**
 
 ### Иерархия инструментов (что чем искать)
 
 | Задача | Инструмент |
 |---|---|
 | Сигнатура класса/метода, параметры, исключения, Remarks, состав класса, доступность по версиям Revit | MCP `revit-api-docs` |
-| Примеры кода, best practices, Jeremy Tammik / The Building Coder, StackOverflow, GitHub open-source плагины, известные баги | Exa (`exa_web_search_exa`) |
+| Официальный C#-пример, который идёт со страницей доков (есть примерно у половины страниц) | MCP `revit-api-docs` с `includeExamples: true` |
+| Примеры кода от сообщества, best practices, Jeremy Tammik / The Building Coder, StackOverflow, GitHub open-source плагины, известные баги | Exa (`exa_web_search_exa`) |
 | Официальная документация .NET / WPF / NuGet-библиотек | Context7 |
 | Revit API через Context7 | **ЗАПРЕЩЕНО** (нет в их базе) |
 
@@ -366,8 +368,8 @@ opencode mcp list        # ожидаем: revit-api-docs В СПИСКЕ НЕТ
 | Инструмент | Принимает | Возвращает | Когда использовать |
 |---|---|---|---|
 | `search-docs` | `queryString`, `queryTypes?`, `year?`, `maxResults?` | список сущностей `{title, description, namespace, type, url}` — БЕЗ текста документации | всегда первым, чтобы получить `url` |
-| `retrieve-doc` | `urlSlug` (строка из ответа поиска) | одна страница полным markdown | нужна конкретная страница |
-| `retrieve-docs` | `queryString`, `queryTypes?`, `year?`, `maxResults?` | полные тексты ВСЕХ найденных страниц | нужно содержимое нескольких страниц сразу |
+| `retrieve-doc` | `urlSlug` (строка из ответа поиска), `includeExamples?` | одна страница полным markdown | нужна конкретная страница |
+| `retrieve-docs` | `queryString`, `queryTypes?`, `year?`, `maxResults?`, `includeExamples?` | полные тексты ВСЕХ найденных страниц | нужно содержимое нескольких страниц сразу |
 
 ### Жёсткие правила вызова
 
@@ -389,18 +391,27 @@ opencode mcp list        # ожидаем: revit-api-docs В СПИСКЕ НЕТ
    ≈ 2 500 символов. Не выгружай десяток страниц класса подряд — сначала `search-docs`,
    потом точечно `retrieve-doc` по методу.
 7. **`maxResults` держи ≤ 5** для разведки (по умолчанию 10, максимум 50).
+8. **`includeExamples` (по умолчанию `false`)** добавляет официальный C#-пример со
+   страницы — от +500 до +3 300 символов, и есть он примерно у половины страниц.
+   Включай, когда нужно посмотреть, как API реально вызывается; не включай, когда
+   нужна только сигнатура. В `retrieve-docs` флаг применяется к каждой странице,
+   поэтому держи `maxResults` = 1–2.
 
 ### Порядок работы при любой задаче с Revit API
 
 1. `search-docs` → найти сущность и получить `url`
 2. `retrieve-doc` → проверить сигнатуру, параметры, исключения, Remarks
-3. Exa → минимум 3 запроса за живым примером кода и известными проблемами
-4. Только потом писать код
+3. `retrieve-doc` с `includeExamples: true` → официальный C#-пример, если он на странице есть
+4. Exa → минимум 3 запроса за живым примером от сообщества и известными проблемами
+5. Только потом писать код
 
 ### Чего MCP НЕ знает и НЕ отдаёт
 
-- **Примеры кода.** Секции `Examples`, `Community Snippets`, `Discussion` намеренно
-  вырезаны при парсинге (`lib/extractDocs.ts`, `SKIPPED_SECTION_LABELS`). За примерами — в Exa.
+- **Контент сообщества.** Секции `Community Snippets` (0–1 карточка pyRevit/Python на
+  страницу) и `Discussion` (не отрисовывается сервером вообще — сайт грузит комментарии
+  через JS под логином) намеренно вырезаны при парсинге (`lib/extractDocs.ts`,
+  `SKIPPED_SECTION_LABELS`). Официальная секция `Examples` больше не вырезается, но
+  включается по запросу: передай `includeExamples: true`. За примерами от сообщества — в Exa.
 - Вкладки синтаксиса VB / C++ / F# — отдаётся только C#.
 - Мнения, «как лучше», архитектурные рекомендации.
 - Всё, чего нет на `rvtdocs.com` / `revitapidocs.com`.
@@ -413,6 +424,7 @@ opencode mcp list        # ожидаем: revit-api-docs В СПИСКЕ НЕТ
 | `404 Not Found` при `search-docs` | сайт снова сменил поисковый API | пересобрать exe из свежего форка |
 | `Main content section not found` при `retrieve-doc` | страницы сайта снова перевёрстаны | то же |
 | Инструменты видны, но падают при вызове; сервер «connected» | стоит старый exe (сборки до 09.2026) | пересобрать exe, перезапустить opencode |
+| Непонятно, какая сборка реально запущена | до `v1.0.6` handshake всегда отвечал `serverInfo.version: 1.0.0` | начиная с `v1.0.7` сервер сообщает настоящую версию — смотри `initialize` → `serverInfo.version` |
 
 Пересборка: `git pull` в клоне форка → `deno compile -A --output Rvt_Docs_MCP-windows.exe main.ts`
 → заменить exe в `tools/` → перезапустить opencode.
@@ -508,6 +520,7 @@ deno compile -A --target aarch64-apple-darwin  --output Rvt_Docs_MCP-macos-arm64
 | Сырой HTML страницы на rvtdocs.com | 202 575 символов | ~50–60k — в контекст не влезает |
 | Ответ `retrieve-doc` через MCP | 15 295 символов | ~4k |
 | Ответ `retrieve-doc` по одному методу | 2 425 символов | ~600 |
+| Тот же метод с `includeExamples: true` | 2 970 символов | ~750 |
 
 То есть MCP даёт **сжатие примерно в 13 раз** и выкидывает всё лишнее (вкладки VB/C++/F#,
 обсуждения, навигацию), оставляя то, что нужно агенту: сигнатуру, параметры, исключения,
@@ -516,7 +529,8 @@ deno compile -A --target aarch64-apple-darwin  --output Rvt_Docs_MCP-macos-arm64
 Вторая польза — **версии 2020–2027**: можно проверить, существует ли метод в нужной
 версии Revit и не поменялась ли сигнатура (актуально для кросс-версионных плагинов).
 
-Чего MCP не заменит: живых примеров кода и «как правильно». Для этого — Exa
+Чего MCP не заменит: примеров кода от сообщества и «как правильно». Официальный пример
+со страницы доступен по явному запросу (`includeExamples: true`), но всё сверх этого — через Exa
 (The Building Coder, GitHub open-source плагины, форумы Autodesk).
 
 ---
@@ -557,7 +571,8 @@ git ls-files "*.exe"                               # пусто
 |---|---|
 | Форк адаптирован под Search V2 | `lib/searchDocs.ts:108` → `https://rvtdocs.com/search/v2/api/`, коммит `42b3bfa` |
 | Отказоустойчивость поиска | `lib/searchDocs.ts:18` → `Promise.allSettled` по двум источникам |
-| Вырезаны Examples/Discussion | `lib/extractDocs.ts:12` → `SKIPPED_SECTION_LABELS` |
+| Карточки сообщества вырезаны, официальные примеры — opt-in | `lib/extractDocs.ts` → `SKIPPED_SECTION_LABELS` (Discussion, Community Snippets) + `EXAMPLES_SECTION_LABEL` под флагом `includeExamples` |
+| `includeExamples` замерен, ответ по умолчанию не изменился | проверено на живых страницах и собранном exe 08.09.2026: `Wall.Create(...)` → 2 425 симв. без флага (идентично базлайну `v1.0.6`) и 2 970 с флагом; `ReferenceIntersector` → 4 571 → 7 872; `Element` (официального примера нет, но есть Python-сниппет сообщества) → 17 652 → 17 652, то есть флаг не добавляет ничего, кроме официального C#-примера. Официальные примеры найдены на 12 из 24 проверенных страниц, по 154–3 272 символа |
 | Диапазон версий 2020–2027 | `lib/toolsCommon.ts:67` → `z.number().min(2020).max(2027)` |
 | `search-library` gated по ключам | `main.ts` → `if (apiKey && vectorStoreId) createSearchLibrary(server)` |
 | Релиз форка с рабочими бинарниками | <https://github.com/Alexandrisius/Rvt_Docs_MCP/releases> → `v1.0.6` (3 ассета: windows, macos-x64, macos-arm64), собран GitHub Actions по тегу |
@@ -566,3 +581,4 @@ git ls-files "*.exe"                               # пусто
 | Относительный путь в конфиге работает | проверено `opencode mcp list` → `connected`, 08.09.2026 |
 | Инструкция проверена end-to-end | команды §3–§6 выполнены дословно в пустой тестовой папке: BOM = `123,10,32`, `git check-ignore` → `.gitignore:1:*.exe`, `git ls-files "*.exe"` → пусто, `opencode mcp list` → `✓ revit-api-docs connected` |
 | CI-артефакт релиза `v1.0.6` рабочий | скачанный `Rvt_Docs_MCP-windows.exe` (97 433 508 байт) проверен прямым MCP-stdio-клиентом: `initialize` → `revit-docs-mcp v1.0.0`, `tools/list` → `search-docs, retrieve-docs, retrieve-doc`, `search-docs "Wall"` → slug'и, `retrieve-doc` перегрузки `Wall.Create` → 2 425 симв. с Parameters / Exceptions / Return Value / C#-синтаксисом / Overloads |
+| Сборки различимы начиная с `v1.0.7` | `main.ts` → `McpServer({ name: "revit-docs-mcp", version: "1.0.7" })`. CI-артефакт `v1.0.6` в строке выше всё ещё отвечал `1.0.0` — именно поэтому версию надо поднимать перед каждым тегом |

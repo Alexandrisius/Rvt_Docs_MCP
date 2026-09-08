@@ -19,9 +19,10 @@ export function createRetrieveDoc(server: McpServer) {
       description: toolDescriptions.retrieveDoc,
       inputSchema: {
         urlSlug: toolValidators.urlSlug,
+        includeExamples: toolValidators.includeExamples,
       },
     },
-    async ({ urlSlug }) => {
+    async ({ urlSlug, includeExamples }) => {
       const fullUrl = urlSlug.startsWith("/")
         ? `https://rvtdocs.com${urlSlug}`
         : `https://rvtdocs.com/${urlSlug}`;
@@ -30,7 +31,7 @@ export function createRetrieveDoc(server: McpServer) {
         return {
           content: [{
             type: "text",
-            text: await extractRvtDocsText(fullUrl),
+            text: await extractRvtDocsText(fullUrl, { includeExamples }),
           }],
         };
       } catch (error) {

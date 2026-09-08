@@ -31,13 +31,17 @@ export const toolDescriptions = {
 
 **Use when:** You already have the exact URL slug from a previous search and want the full documentation content.
 
-**Notes:** You MUST first use the "${toolNames.searchDocs}" tool to get the URL slug. An incorrect slug will cause an error.`,
+**Notes:**
+- You MUST first use the "${toolNames.searchDocs}" tool to get the URL slug. An incorrect slug will cause an error.
+- Set includeExamples to true to also get the official C# code example of the page (when it has one). Off by default because it roughly doubles the response size.`,
   retrieveDocs:
     `Retrieves full documentation content for multiple Revit API entities based on a search query.
 
 **Use when:** You want to explore API entities and need their complete documentation content, not just search results.
 
-**Notes:** Set maxResults to 1 if you only need the first result.`,
+**Notes:**
+- Set maxResults to 1 if you only need the first result.
+- includeExamples applies to every retrieved page, so with maxResults > 1 it multiplies the response size. Prefer it with a small maxResults, or use "${toolNames.retrieveDoc}" on one slug.`,
   searchDocs:
     `Searches Revit API documentation to find entities matching your query.
 
@@ -68,6 +72,10 @@ export const toolValidators = {
     .describe("Revit API documentation year version (2020-2027)"),
   maxResults: z.number().min(1).max(50).optional().default(10)
     .describe("Maximum number of search results to return"),
+  includeExamples: z.boolean().optional().default(false)
+    .describe(
+      `Also return the page's official C# code example (the site's "Examples" card), when it has one. Roughly half of all pages have an example; it adds ~350-450 tokens per page. Left out by default to keep responses small — set it to true when you need to see how the API is actually called, not just its signature.`,
+    ),
   queryTypes: z.array(z.enum(SearchResultTypes)).optional().default([
     ...SearchResultTypes,
   ])

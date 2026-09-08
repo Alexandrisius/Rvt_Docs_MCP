@@ -8,13 +8,32 @@ type CommentNode = DefaultTreeAdapterMap["commentNode"];
 /**
  * Section labels that hold community content rather than API reference data.
  * They are skipped to keep the output deterministic and compact.
+ *
+ * "Discussion" is never server-rendered (comments.js loads it client-side behind
+ * a login) and "Community Snippets" holds at most one pyRevit/Python card per
+ * page, so both would only add noise.
  */
-const SKIPPED_SECTION_LABELS = ["Discussion", "Community Snippets", "Examples"];
+const SKIPPED_SECTION_LABELS = ["Discussion", "Community Snippets"];
+
+/**
+ * Label of the card that holds the official SDK code example. Unlike the two
+ * above it contains real reference content, so it is opt-in rather than always
+ * dropped: it costs ~350-450 tokens and exists on roughly half of all pages.
+ */
+const EXAMPLES_SECTION_LABEL = "Examples";
 
 /**
  * Card classes that hold community content (discussion / snippet cards).
  */
 const SKIPPED_CARD_CLASSES = ["cmt-card", "snip-doc-card"];
+
+export interface ExtractDocsOptions {
+  /**
+   * Also extract the page's `Examples` card (official SDK sample code, C# tab
+   * only). Defaults to false to keep responses token-cheap.
+   */
+  includeExamples?: boolean;
+}
 
 /**
  * Extracts Revit API documentation from rvtdocs.com HTML and converts it to
@@ -22,7 +41,10 @@ const SKIPPED_CARD_CLASSES = ["cmt-card", "snip-doc-card"];
  * exceptions-card, member-section-card, ...) instead of template comments so
  * minor template rewording does not break extraction.
  */
-export async function extractRvtDocsText(url: string): Promise<string> {
+export async function extractRvtDocsText(
+  url: string,
+  options: ExtractDocsOptions = {},
+): Promise<string> {
   const response = await fetch(url);
   if (!response.ok) {
     throw new Error(
@@ -49,6 +71,9 @@ export async function extractRvtDocsText(url: string): Promise<string> {
 
   // Labeled reference sections: Syntax, Parameters, Exceptions, Methods, ...
   const renderedTables = new Set<Element>();
+  const skippedLabels = options.includeExamples
+    ? SKIPPED_SECTION_LABELS
+    : [...SKIPPED_SECTION_LABELS, EXAMPLES_SECTION_LABEL];
   const labels = findAll(
     mainContent,
     (el) => hasClass(el, "card-toolbar-label"),
@@ -58,7 +83,7 @@ export async function extractRvtDocsText(url: string): Promise<string> {
       /\s*\(\d+\s+members?\)/i,
       "",
     );
-    if (!label || SKIPPED_SECTION_LABELS.includes(label)) continue;
+    if (!label || skippedLabels.includes(label)) continue;
 
     const card = findParent(labelEl, (el) => hasClass(el, "card"));
     if (!card) continue;
@@ -204,14 +229,44 @@ function extractSection(
       if (!codeElement) continue;
       const code = cleanCode(getText(codeElement));
       if (!code) continue;
-      const codeClass = getAttr(codeElement, "class") || "";
-      const language = codeClass.includes("vb")
-        ? "vbnet"
-        : codeClass.includes("cpp")
-        ? "cpp"
-        : codeClass.includes("fs")
-        ? "fsharp"
-        : "csharp";
+      const language = languageFromCodeClass(
+        getAttr(codeElement, "class") ?? "",
+      );
+      markdown += `\`\`\`${language}\n${code}\n\`\`\`\n\n`;
+      added = true;
+    }
+    if (added) return markdown;
+  }
+
+  // Examples: the official SDK sample code that ships with the page. C# only —
+  // the Python tab is an AI translation of the very same sample and the VB tab
+  // duplicates it, so emitting them would triple the cost for zero new
+  // information. The class token differs from the Syntax card on purpose:
+  // "example-code-snippet" must not match "code-snippet".
+  const exampleSnippets = findAll(
+    card,
+    (el) => hasClass(el, "example-code-snippet"),
+  );
+  if (exampleSnippets.length > 0) {
+    const csharpTabs = exampleSnippets.filter((el) =>
+      (getAttr(el, "data-tab-index") ?? "").startsWith("C#")
+    );
+    // A page that ever ships an example without a C# tab still beats dropping
+    // it: fall back to whichever tab the site renders by default.
+    const picked = csharpTabs.length > 0
+      ? csharpTabs
+      : exampleSnippets.filter((el) => !hasClass(el, "hidden"));
+
+    let markdown = `## ${label}\n\n`;
+    let added = false;
+    for (const snippet of picked) {
+      const codeElement = find(snippet, (el) => el.nodeName === "code");
+      if (!codeElement) continue;
+      const code = cleanCode(getText(codeElement));
+      if (!code) continue;
+      const language = languageFromCodeClass(
+        getAttr(codeElement, "class") ?? "",
+      );
       markdown += `\`\`\`${language}\n${code}\n\`\`\`\n\n`;
       added = true;
     }
@@ -266,6 +321,18 @@ function extractSection(
     .replace(new RegExp(`^${label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`), "")
     .trim();
   return text ? `## ${label}\n\n${text}\n\n` : "";
+}
+
+/**
+ * Markdown fence language for a `<code class="language-...">` element. The site
+ * spells C# as "language-cs", so csharp is the default rather than a match.
+ */
+function languageFromCodeClass(codeClass: string): string {
+  if (codeClass.includes("vb")) return "vbnet";
+  if (codeClass.includes("cpp")) return "cpp";
+  if (codeClass.includes("fs")) return "fsharp";
+  if (codeClass.includes("py")) return "python";
+  return "csharp";
 }
 
 function findElementAfterComment(

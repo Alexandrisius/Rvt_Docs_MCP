@@ -351,15 +351,17 @@ and the agent expects code examples from an MCP that has none.
 This project has a local MCP server `revit-api-docs` connected
 (fork of <https://github.com/Alexandrisius/Rvt_Docs_MCP>, exe in `tools/`, config in `opencode.json`).
 The server parses `rvtdocs.com` + `revitapidocs.com` and returns Revit API reference material as
-compact markdown. **It has no knowledge of its own, it does not return code examples,
-and it works online only.**
+compact markdown. **It has no knowledge of its own and it works online only; the only
+code it returns is the official example that ships with a docs page, and only when you
+explicitly ask for it (`includeExamples: true`).**
 
 ### Tool hierarchy (what to use for what)
 
 | Task | Tool |
 |---|---|
 | Class/method signature, parameters, exceptions, Remarks, class composition, availability across Revit versions | MCP `revit-api-docs` |
-| Code examples, best practices, Jeremy Tammik / The Building Coder, StackOverflow, GitHub open-source plugins, known bugs | Exa (`exa_web_search_exa`) |
+| The official C# example that ships with a docs page (about half of all pages have one) | MCP `revit-api-docs` with `includeExamples: true` |
+| Community code examples, best practices, Jeremy Tammik / The Building Coder, StackOverflow, GitHub open-source plugins, known bugs | Exa (`exa_web_search_exa`) |
 | Official documentation for .NET / WPF / NuGet libraries | Context7 |
 | Revit API through Context7 | **FORBIDDEN** (not in their database) |
 
@@ -368,8 +370,8 @@ and it works online only.**
 | Tool | Accepts | Returns | When to use |
 |---|---|---|---|
 | `search-docs` | `queryString`, `queryTypes?`, `year?`, `maxResults?` | a list of entities `{title, description, namespace, type, url}` — WITHOUT the documentation text | always first, to obtain the `url` |
-| `retrieve-doc` | `urlSlug` (a string from the search response) | one page as full markdown | you need one specific page |
-| `retrieve-docs` | `queryString`, `queryTypes?`, `year?`, `maxResults?` | the full text of ALL pages found | you need the contents of several pages at once |
+| `retrieve-doc` | `urlSlug` (a string from the search response), `includeExamples?` | one page as full markdown | you need one specific page |
+| `retrieve-docs` | `queryString`, `queryTypes?`, `year?`, `maxResults?`, `includeExamples?` | the full text of ALL pages found | you need the contents of several pages at once |
 
 ### Hard rules for calling the tools
 
@@ -392,19 +394,26 @@ and it works online only.**
    ≈ 2,500 characters. Do not dump a dozen class pages in a row — first `search-docs`,
    then `retrieve-doc` for the specific method.
 7. **Keep `maxResults` ≤ 5** for scouting (default 10, maximum 50).
+8. **`includeExamples` (default `false`)** adds the page's official C# example —
+   +500 to +3,300 characters, and only about half of all pages have one. Turn it on
+   when you need to see how the API is actually called; leave it off when you only need
+   the signature. In `retrieve-docs` it applies to every page, so keep `maxResults` at 1-2.
 
 ### Order of work for any Revit API task
 
 1. `search-docs` → find the entity and get its `url`
 2. `retrieve-doc` → check the signature, parameters, exceptions, Remarks
-3. Exa → at least 3 queries for a live code example and known issues
-4. Only then write the code
+3. `retrieve-doc` with `includeExamples: true` → the official C# example, if the page has one
+4. Exa → at least 3 queries for a live community example and known issues
+5. Only then write the code
 
 ### What the MCP does NOT know and does NOT return
 
-- **Code examples.** The `Examples`, `Community Snippets` and `Discussion` sections are
-  deliberately cut out during parsing (`lib/extractDocs.ts`, `SKIPPED_SECTION_LABELS`). For
-  examples, go to Exa.
+- **Community content.** The `Community Snippets` (0-1 pyRevit/Python card per page) and
+  `Discussion` (not server-rendered at all — the site loads comments via JS behind a login)
+  sections are deliberately cut out during parsing (`lib/extractDocs.ts`,
+  `SKIPPED_SECTION_LABELS`). The official SDK `Examples` card is no longer cut, but it is
+  opt-in: pass `includeExamples: true`. For community examples, go to Exa.
 - VB / C++ / F# syntax tabs — only C# is returned.
 - Opinions, "what is the best way", architectural recommendations.
 - Anything that is not on `rvtdocs.com` / `revitapidocs.com`.
@@ -417,6 +426,7 @@ and it works online only.**
 | `404 Not Found` from `search-docs` | the site changed its search API again | rebuild the exe from the current fork |
 | `Main content section not found` from `retrieve-doc` | the site's pages were re-templated again | same |
 | Tools are visible but fail when called; the server shows "connected" | an old exe is installed (builds older than 2026-09) | rebuild the exe, restart opencode |
+| You cannot tell which build is actually running | up to `v1.0.6` the handshake always reported `serverInfo.version: 1.0.0` | from `v1.0.7` the server reports its real version — check `initialize` → `serverInfo.version` |
 
 Rebuild: `git pull` in the fork clone → `deno compile -A --output Rvt_Docs_MCP-windows.exe main.ts`
 → replace the exe in `tools/` → restart opencode.
@@ -512,6 +522,7 @@ A comparison on the real page of the class `Autodesk.Revit.DB.Wall` (Revit 2025)
 | Raw HTML of the page on rvtdocs.com | 202,575 characters | ~50–60k — does not fit into the context |
 | `retrieve-doc` response through the MCP | 15,295 characters | ~4k |
 | `retrieve-doc` response for a single method | 2,425 characters | ~600 |
+| the same method with `includeExamples: true` | 2,970 characters | ~750 |
 
 So the MCP gives roughly a **13x compression** and throws away everything superfluous (VB/C++/F#
 tabs, discussions, navigation), keeping what the agent actually needs: the signature, parameters,
@@ -520,8 +531,9 @@ exceptions, inheritance hierarchy and the list of class members.
 The second benefit is **versions 2020–2027**: you can check whether a method exists in the Revit
 version you need and whether its signature changed (relevant for cross-version plugins).
 
-What the MCP will not replace: live code examples and "the right way to do it". For that, use Exa
-(The Building Coder, GitHub open-source plugins, Autodesk forums).
+What the MCP will not replace: community code examples and "the right way to do it". The official
+SDK example of a page is available per call (`includeExamples: true`), but for anything beyond
+that use Exa (The Building Coder, GitHub open-source plugins, Autodesk forums).
 
 ---
 
@@ -561,7 +573,8 @@ git ls-files "*.exe"                               # empty
 |---|---|
 | The fork is adapted to Search V2 | `lib/searchDocs.ts:108` → `https://rvtdocs.com/search/v2/api/`, commit `42b3bfa` |
 | Search resilience | `lib/searchDocs.ts:18` → `Promise.allSettled` over two sources |
-| Examples/Discussion are cut out | `lib/extractDocs.ts:12` → `SKIPPED_SECTION_LABELS` |
+| Community cards are cut out, official examples are opt-in | `lib/extractDocs.ts` → `SKIPPED_SECTION_LABELS` (Discussion, Community Snippets) + `EXAMPLES_SECTION_LABEL` gated by `includeExamples` |
+| `includeExamples` measured, the default response untouched | verified against live pages and the compiled exe on 2026-09-08: `Wall.Create(...)` → 2,425 chars without the flag (identical to the `v1.0.6` baseline) and 2,970 with it; `ReferenceIntersector` → 4,571 → 7,872; `Element` (no official example, but a community Python snippet) → 17,652 → 17,652, i.e. the flag adds nothing but the official C# example. Official examples were found on 12 of 24 sampled pages, 154–3,272 characters each |
 | Version range 2020–2027 | `lib/toolsCommon.ts:67` → `z.number().min(2020).max(2027)` |
 | `search-library` is gated by keys | `main.ts` → `if (apiKey && vectorStoreId) createSearchLibrary(server)` |
 | Fork release with working binaries | <https://github.com/Alexandrisius/Rvt_Docs_MCP/releases> → `v1.0.6` (3 assets: windows, macos-x64, macos-arm64), built by GitHub Actions on the tag |
@@ -570,3 +583,4 @@ git ls-files "*.exe"                               # empty
 | A relative path in the config works | verified with `opencode mcp list` → `connected`, 2026-09-08 |
 | The guide was verified end-to-end | the §3–§6 commands were run verbatim in an empty test folder: BOM = `123,10,32`, `git check-ignore` → `.gitignore:1:*.exe`, `git ls-files "*.exe"` → empty, `opencode mcp list` → `✓ revit-api-docs connected` |
 | The CI artifact of release `v1.0.6` works | the downloaded `Rvt_Docs_MCP-windows.exe` (97,433,508 bytes) was checked with a direct MCP-stdio client: `initialize` → `revit-docs-mcp v1.0.0`, `tools/list` → `search-docs, retrieve-docs, retrieve-doc`, `search-docs "Wall"` → slugs, `retrieve-doc` for the `Wall.Create` overload → 2,425 chars with Parameters / Exceptions / Return Value / C# syntax / Overloads |
+| Builds are distinguishable since `v1.0.7` | `main.ts` → `McpServer({ name: "revit-docs-mcp", version: "1.0.7" })`. The `v1.0.6` artifact in the row above still reported `1.0.0`, which is exactly why the version has to be bumped before every tag |

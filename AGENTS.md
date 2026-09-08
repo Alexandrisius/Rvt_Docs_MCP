@@ -23,9 +23,13 @@ trees, member listings.
   If the answer is not on those two sites, the server cannot produce it.
 - **No database, no cache.** Every call goes to the network (see §10 for why this is
   the biggest resilience risk).
-- **No code examples.** The sites' `Examples`, `Community Snippets` and `Discussion`
-  cards are dropped on purpose (`lib/extractDocs.ts`, `SKIPPED_SECTION_LABELS`).
-  Examples must come from elsewhere (web search, The Building Coder, `search-library`).
+- **No community content.** The sites' `Discussion` and `Community Snippets` cards are
+  dropped on purpose (`lib/extractDocs.ts`, `SKIPPED_SECTION_LABELS`): the discussion
+  is not server-rendered at all (the page loads comments via JS behind a login) and
+  the snippets amount to 0–1 pyRevit/Python card per page. The official SDK `Examples`
+  card *is* extracted, but only on request — `includeExamples: true`, off by default
+  (I-05). Broader examples must come from elsewhere (web search, The Building Coder,
+  `search-library`); see §10 item 3 for what is actually available.
 
 **Why it exists at all:** the Revit API surface is enormous and niche, so models
 hallucinate classes, methods and even namespaces. A tool that returns the *actual*
@@ -52,7 +56,7 @@ raw HTML (~13x compression measured on `Autodesk.Revit.DB.Wall`).
 | Default branch | `master` (not `main`) |
 | Runtime | Deno 2.x (`deno --version` → 2.9.6 verified) |
 | Protocol | MCP over **stdio**, newline-delimited JSON-RPC |
-| `serverInfo` | name `revit-docs-mcp`, version `1.0.0` (hardcoded in `main.ts`, **not** bumped per release — known debt, §10) |
+| `serverInfo` | name `revit-docs-mcp`, version `1.0.7` — hardcoded in `main.ts`, **bump it before every tag** (builds up to `v1.0.6` reported `1.0.0`, so clients could not tell them apart) |
 | Tools exposed | `search-docs`, `retrieve-doc`, `retrieve-docs` |
 | Tool gated | `search-library` — registered **only** if both `OPENAI_API_KEY` and `OPENAI_VECTOR_STORE_ID` are set (env or `-k` / `-v` flags) |
 | Doc sources | `rvtdocs.com` (primary, Search V2) + `revitapidocs.com` (secondary) |
@@ -67,9 +71,9 @@ raw HTML (~13x compression measured on `Autodesk.Revit.DB.Wall`).
 | Path | Responsibility | Care level |
 |---|---|---|
 | `main.ts` | CLI arg parsing (`-k`, `-v`, `-h`), env reading, tool registration, stdio transport | Medium — touches startup; remember stdout is the protocol channel (§5, I-07) |
-| `lib/toolsCommon.ts` | Shared zod schemas: `queryString`, `queryTypes`, `year` (2020–2027), `maxResults` (1–50, default 10) | **High** — these descriptions are the only documentation an agent sees |
+| `lib/toolsCommon.ts` | Shared zod schemas: `queryString`, `queryTypes`, `year` (2020–2027), `maxResults` (1–50, default 10), `includeExamples` (default false) | **High** — these descriptions are the only documentation an agent sees |
 | `lib/searchDocs.ts` | Both search sources, `Promise.allSettled`, dedupe by URL, sort by type, slice | **High** — contains the Search V2 endpoint and the mandatory `fields` param |
-| `lib/extractDocs.ts` | HTML → markdown. parse5 DOM walk, section cards, syntax, parameters, exceptions, hierarchy/overloads, `SKIPPED_SECTION_LABELS` | **Highest** — the most fragile file; breaks whenever the site re-templates |
+| `lib/extractDocs.ts` | HTML → markdown. parse5 DOM walk, section cards, syntax, opt-in `Examples`, parameters, exceptions, hierarchy/overloads, `SKIPPED_SECTION_LABELS` + `EXAMPLES_SECTION_LABEL` | **Highest** — the most fragile file; breaks whenever the site re-templates |
 | `lib/searchVectorLibrary.ts` | OpenAI vector-store search for `search-library` | Low (gated feature) |
 | `tools/*.ts` | One file per MCP tool: schema + handler wiring | Medium |
 | `types/index.ts` | Response shapes of both sites (`SearchResponseRvtDocsCom`, `SearchResponseRevirApiDocsCom`, `SearchResult`, `SearchResultTypes`) | **High** — must match live site responses |
@@ -86,9 +90,11 @@ Downstream users paste tool names and parameter rules into their own `AGENTS.md`
 files. Breaking these silently breaks their agents.
 
 - **I-01 — Tool names and parameters are public API.** `search-docs(queryString,
-  queryTypes?, year?, maxResults?)`, `retrieve-doc(urlSlug)`,
-  `retrieve-docs(queryString, queryTypes?, year?, maxResults?)`. Renaming a tool or a
-  parameter is a breaking change: it requires a major version bump and a release note.
+  queryTypes?, year?, maxResults?)`, `retrieve-doc(urlSlug, includeExamples?)`,
+  `retrieve-docs(queryString, queryTypes?, year?, maxResults?, includeExamples?)`.
+  Renaming a tool or a parameter is a breaking change: it requires a major version bump
+  and a release note. Adding an *optional* parameter with a default that preserves the
+  old behaviour (as `includeExamples: false` did) is not breaking.
 - **I-02 — `queryString` is an entity name, not natural language.** Valid: `Wall`,
   `ElementTransformUtils.MoveElement`, `ConnectorManager`, `Constructor(arg1, arg2)`.
   `Class.Member` works only for `year >= 2025`. The zod `.describe(...)` text is the
@@ -101,6 +107,9 @@ files. Breaking these silently breaks their agents.
 - **I-05 — Responses stay token-cheap.** Markdown with tables, C# syntax only,
   community cards skipped. Any feature that can inflate a response (examples, all
   language tabs, full member docs) must be **opt-in per call**, never default.
+  `includeExamples` is the reference implementation of this rule: the official C#
+  example costs ~350-450 tokens and exists on ~50% of pages, so it defaults to `false`
+  and the VB / AI-translated Python tabs of the same sample are never emitted.
 - **I-06 — Partial failure must not fail the whole call.** Search sources are queried
   with `Promise.allSettled` and only throw when *every* source failed; `retrieve-docs`
   wraps each page in `try/catch` so one unreachable page does not discard the pages
@@ -117,8 +126,8 @@ files. Breaking these silently breaks their agents.
   assets are produced by CI, not uploaded from a working tree.
 - **I-10 — Do not push tags without an explicit instruction.** Any tag matching `v*`
   triggers CI and **publishes a public release**. Tags `v1.0.0`–`v1.0.5` already exist
-  (inherited from upstream at fork time, no assets). Next version after `v1.0.6` is
-  `v1.0.7`.
+  (inherited from upstream at fork time, no assets), `v1.0.6` fixed the Search V2
+  breakage and `v1.0.7` added `includeExamples`. Next version is `v1.0.8`.
 
 ## 6. Build, verify, release — exact commands
 
@@ -188,7 +197,11 @@ The retrieved page must contain `## Parameters`, `## Exceptions`,
 `## Overloads` tree. `search-library` is absent unless both OpenAI variables are set —
 that is correct, not a bug.
 
-Also worth checking: `year: 2020` and `year: 2027` both return valid slugs.
+Also worth checking: `year: 2020` and `year: 2027` both return valid slugs, and the
+same slug called twice — once without the flag and once with `includeExamples: true` —
+returns **2425** and **2970** characters respectively, the second one containing a
+`## Examples` section with a single ```` ```csharp ```` block (no `vbnet`, no `python`).
+The flag must never change the default response.
 
 ### Verify inside a real client (opencode)
 
@@ -211,12 +224,23 @@ Project-relative paths resolve from the project root, so this config is committa
 while the binary stays untracked. **Restart the client after editing the config** —
 running sessions do not pick up new servers.
 
+This repository ships its own root-level `opencode.json` for dogfooding: it points at
+`./Rvt_Docs_MCP-windows.exe`, i.e. exactly the artifact the build command above
+produces. The config is committed, the binary is not (`Rvt_Docs_MCP*` in
+`.gitignore`), so after a fresh clone you must build the binary before the server
+connects. Do not switch this config to `deno run -A main.ts`: Deno is not guaranteed
+to be on `PATH` (the winget install does not create a shim).
+
 ### Publish a release
 
+Bump the handshake version first — `McpServer({ name, version })` in `main.ts` must
+match the tag you are about to push (this is what lets a client tell builds apart), then
+rebuild and re-run the smoke client. The next version after `v1.0.7` is `v1.0.8`.
+
 ```bash
-git tag -a v1.0.7 -m "v1.0.7 - <what changed>"
+git tag -a v1.0.8 -m "v1.0.8 - <what changed>"
 git push origin master
-git push origin v1.0.7          # push the tag explicitly; --follow-tags would also work
+git push origin v1.0.8          # push the tag explicitly; --follow-tags would also work
 gh run list --repo Alexandrisius/Rvt_Docs_MCP --limit 3
 gh run watch <run-id> --repo Alexandrisius/Rvt_Docs_MCP --exit-status
 ```
@@ -224,9 +248,9 @@ gh run watch <run-id> --repo Alexandrisius/Rvt_Docs_MCP --exit-status
 CI builds all three targets (~1–2 min) and creates the release. **Two gotchas:**
 
 1. The release body is created **empty** by `softprops/action-gh-release`. Always fill
-   it in afterwards: `gh release edit v1.0.7 --notes-file notes.md`.
+   it in afterwards: `gh release edit v1.0.8 --notes-file notes.md`.
 2. **Re-verify the CI artifact**, do not trust the local build — compile environments
-   differ. Download the asset (`gh release download v1.0.7 --pattern
+   differ. Download the asset (`gh release download v1.0.8 --pattern
    "Rvt_Docs_MCP-windows.exe" --dir <tmp>`) and run the stdio smoke client above
    against it. For `v1.0.6` the CI artifact answered byte-identically to the local
    build (`RETRIEVE len: 2425`).
@@ -245,6 +269,7 @@ CI builds all three targets (~1–2 min) and creates the release. **Two gotchas:
 | Client handshake fails / hangs | non-JSON on stdout (I-07), or the OS blocked an unsigned binary | run the smoke client and look at raw stdout; on Windows check "Unblock" in file properties |
 | A specific `year` returns nothing | outside site coverage (2020–2027) | `lib/toolsCommon.ts` |
 | `retrieve-doc` on an overload fails | slug must be the exact string from search results, including the parenthesised parameter list | pass `url` from `search-docs` verbatim |
+| `includeExamples: true` but no `## Examples` in the response | either the page genuinely has no example (~50% of pages do not), or the card was renamed | `extractSection` in `lib/extractDocs.ts` — it matches the label `Examples` and the class `example-code-snippet` (distinct from the Syntax card's `code-snippet`), plus `data-tab-index="C#-n"` to pick the C# tab |
 
 **If the site moved again:** reproduce with the smoke client, capture the failing raw
 response, fix the endpoint or selectors, `deno check`, re-run the smoke client, then
@@ -265,15 +290,19 @@ upstream.
 
 1. Find the headline card; if absent → `Main content section not found`.
 2. Walk labeled section cards (`Syntax`, `Parameters`, `Exceptions`, member lists, …),
-   skipping labels in `SKIPPED_SECTION_LABELS` = `["Discussion", "Community Snippets",
-   "Examples"]` and community card classes.
+   skipping labels in `SKIPPED_SECTION_LABELS` = `["Discussion", "Community Snippets"]`
+   and community card classes. The `Examples` label (`EXAMPLES_SECTION_LABEL`) is added
+   to that skip list unless the caller passed `includeExamples: true`.
 3. `Syntax` → the code block of the *active* language tab (C# in practice); VB / C++ /
    F# tabs are dropped.
-4. Parameters table + `return-row` (`return-type` / `return-desc`) → `**Return Value:**`.
-5. Exceptions table, member tables, then tables living outside labeled sections.
-6. The hierarchy card renders as `## Hierarchy` on class pages and as `## Overloads` +
+4. `Examples` (opt-in) → the `example-code-snippet` div whose `data-tab-index` starts
+   with `C#`; the AI-translated Python tab and the VB tab hold the same sample and are
+   dropped. A page with no C# tab falls back to whichever tab is not `hidden`.
+5. Parameters table + `return-row` (`return-type` / `return-desc`) → `**Return Value:**`.
+6. Exceptions table, member tables, then tables living outside labeled sections.
+7. The hierarchy card renders as `## Hierarchy` on class pages and as `## Overloads` +
    an overload list on member pages (detected by an `Overloads (n):` prefix regex).
-7. Collapse 3+ consecutive newlines and trim.
+8. Collapse 3+ consecutive newlines and trim.
 
 ## 9. Documentation map
 
@@ -301,18 +330,39 @@ Ordered by value. Nothing here is started — pick it up only with an explicit i
    network. A local cache (or a bundled snapshot for common entities) would survive the
    next migration. Upstream marked caching "unlikely"; that judgement predates the
    September 2026 breakage.
-3. **Code examples** — the sites have very few, and the ones they have are dropped by
-   design (I-05). Upstream's planned approach is a vector store over RevitSdkSamples
-   and community repos. A promising alternative is a store of *verified* snippets
-   contributed by agents after a successful run. Must stay opt-in per call.
-4. **`serverInfo.version` is hardcoded to `1.0.0`** in `main.ts` while releases are
-   `v1.0.6`+. Bump it (or derive it) so clients can tell builds apart.
-5. **No Linux target** in the CI matrix (`windows`, `macos-x64`, `macos-arm64` only).
-6. **No automated tests.** The stdio smoke client in §6 is a candidate for a
+3. **Code examples** — *stage A is done*: the official SDK example that ships with a
+   docs page is extracted behind `includeExamples: true` (measured on 24 live pages of
+   the 2025 docs: 12 have one, 154–3272 chars, ~350–450 tokens each). The remaining
+   stages, in order of value per unit of effort:
+   - **B — bundle `jeremytammik/the_building_coder_samples`** (MIT, ~3.4 MB, ~180
+     topic-named `Cmd*.cs` files, migrated to Revit 2025 / .NET 8, plus `BcSamples.txt`
+     as a ready-made title index). Small enough to embed with `deno compile --include`
+     or to download once into a cache dir; searchable offline by filename + identifiers,
+     no keys, no embeddings. This is the best code asset available.
+   - **C — The Building Coder prose.** Typepad was discontinued in August 2025 and
+     `thebuildingcoder.typepad.com` now 302-redirects to networksolutions.com — do not
+     build anything against that domain. The blog lives on as
+     `jeremytammik.github.io/tbc/a/` (repo `jeremytammik/tbc`, branch `gh-pages`, MIT).
+     Two cheap entry points: the complete post index in a single 577 KB
+     `/tbc/a/index.html` (`number | date | title | slug` for all 2081 posts) and a
+     public Pagefind index (`/tbc/a/pagefind/pagefind-entry.json`, `page_count: 2077`,
+     v1.5.2). A typical post is ~14 KB HTML with ~19 code blocks → ~2–2.5k tokens of
+     markdown. Autodesk also mirrors the archive up to August 2025 on `blog.autodesk.io`.
+   - **D — skip** a hand-written Pagefind shard client (format is versioned and fragile)
+     and skip extending the OpenAI vector-store path: both cost more than they return.
+   - `jeremytammik/RevitSdkSamples` is MIT but 1.8 GB — only ever an optional local
+     clone, never a bundled asset.
+   - A promising alternative to all of the above is a store of *verified* snippets
+     contributed by agents after a successful run. Must stay opt-in per call.
+4. **No Linux target** in the CI matrix (`windows`, `macos-x64`, `macos-arm64` only).
+5. **No automated tests.** The stdio smoke client in §6 is a candidate for a
    `deno task smoke` that runs against a recorded fixture, so regressions in
    `extractDocs.ts` are caught without depending on a live site.
-7. **Upstream PR** for [kaitpw/Rvt_Docs_MCP#3](https://github.com/kaitpw/Rvt_Docs_MCP/issues/3)
+6. **Upstream PR** for [kaitpw/Rvt_Docs_MCP#3](https://github.com/kaitpw/Rvt_Docs_MCP/issues/3)
    — offered, not merged.
+
+Done and removed from this list: the `serverInfo.version` bump (was hardcoded to
+`1.0.0`, now matches the release and is part of the §6 release checklist).
 
 ## 11. Conventions
 

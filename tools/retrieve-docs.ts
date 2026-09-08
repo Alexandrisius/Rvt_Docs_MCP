@@ -23,9 +23,10 @@ export function createRetrieveDocs(server: McpServer) {
         queryTypes: toolValidators.queryTypes,
         year: toolValidators.year,
         maxResults: toolValidators.maxResults,
+        includeExamples: toolValidators.includeExamples,
       },
     },
-    async ({ queryString, queryTypes, year, maxResults }) => {
+    async ({ queryString, queryTypes, year, maxResults, includeExamples }) => {
       let searches;
       try {
         searches = await searchWrapper(
@@ -55,7 +56,7 @@ export function createRetrieveDocs(server: McpServer) {
         try {
           results.push({
             url: fullUrl,
-            text: await extractRvtDocsText(fullUrl),
+            text: await extractRvtDocsText(fullUrl, { includeExamples }),
           });
         } catch (error) {
           // One unreachable page must not discard the pages already

@@ -101,7 +101,9 @@ async function main() {
 
   const server = new McpServer({
     name: "revit-docs-mcp",
-    version: "1.0.0",
+    // Bump this with every release: it is the only way an MCP client can tell
+    // builds apart during the handshake (builds up to v1.0.6 reported 1.0.0).
+    version: "1.0.7",
   });
 
   createSearchDocs(server);

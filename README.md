@@ -25,8 +25,9 @@
 > - **Page scraper rewritten** for the redesigned layout — it anchors on stable CSS
 >   classes instead of HTML template comments, and additionally extracts
 >   Parameters / Exceptions / Return Value as tables, the overload tree and the C#
->   syntax block. VB / C++ / F# tabs and the Discussion / Community Snippets /
->   Examples cards are dropped on purpose to keep responses token-cheap.
+>   syntax block. VB / C++ / F# tabs and the Discussion / Community Snippets cards are
+>   dropped on purpose to keep responses token-cheap. The official SDK `Examples` card
+>   is available on demand via `includeExamples: true` (off by default).
 > - **Resilience**: both search sources are queried with `Promise.allSettled`, so a
 >   dead source degrades the result set instead of failing the whole call; in
 >   `retrieve-docs` one unreachable page no longer discards pages already fetched.
@@ -57,11 +58,18 @@ will use a combination of tools to explore the API docs on its own.
 
 ### Features (Planned)
 
-- **Code Examples**: Get code examples for Revit API usage and make them
-  accessible. See
-  [RevitSdkSamples](https://github.com/jeremytammik/RevitSdkSamples). Or maybe
-  even entire repos, like those from ricuan-io, Nice3point, chuongmep, kilkellym, and of
-  course jeremytammik.
+- **Code Examples**: the official SDK example that ships with a docs page is already
+  available per call (`includeExamples: true` on `retrieve-doc` / `retrieve-docs`).
+  What is still missing is *community* code: Get code examples for Revit API usage and
+  make them accessible. See
+  [RevitSdkSamples](https://github.com/jeremytammik/RevitSdkSamples) and
+  [the_building_coder_samples](https://github.com/jeremytammik/the_building_coder_samples)
+  (both MIT). Or maybe even entire repos, like those from ricuan-io, Nice3point,
+  chuongmep, kilkellym, and of course jeremytammik. Note that The Building Coder blog
+  itself moved off Typepad (shut down August 2025) to
+  [jeremytammik.github.io/tbc](https://jeremytammik.github.io/tbc/a/) — MIT-licensed,
+  with a complete post index and a Pagefind full-text index, so it is now practical to
+  consume without scraping.
 - **More Resources**: Add other content to the vector store. Candidates include
   tbc-related pdfs, random blog posts, and Autodesk University resources.
 - **Caching (Unlikely)**: Cache responses to reduce traffic to the api doc
@@ -77,11 +85,14 @@ documentation:
   slugs for further exploration (but not the documentation itself).
 
 - **`retrieve-doc`** - Retrieve a single Revit API documentation page using its
-  URL slug. Use this after getting a URL slug from a search operation.
+  URL slug. Use this after getting a URL slug from a search operation. Pass
+  `includeExamples: true` to also get the page's official C# code example (about
+  half of all pages have one; it adds ~500-3,300 characters).
 
 - **`retrieve-docs`** - Get full documentation content for multiple Revit API
   entities based on a search query. Useful when you need complete documentation
-  content, not just search results.
+  content, not just search results. Accepts the same `includeExamples` flag, which
+  then applies to every retrieved page.
 
 - **`search-library`** - Search a comprehensive library of Revit API learning
   resources including blog posts, code examples, PDFs, and practical guides.
