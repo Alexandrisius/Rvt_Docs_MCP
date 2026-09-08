@@ -65,7 +65,7 @@ npm install -g @opencode/cli        # опционально: бета V2 (ко�
 ### Вариант A — скачать готовый exe (быстро, РЕКОМЕНДУЕТСЯ)
 
 1. Открой **<https://github.com/Alexandrisius/Rvt_Docs_MCP/releases>**
-2. Возьми последний релиз (**`v1.0.6`** или новее) и скачай ассет
+2. Возьми последний релиз (**`v1.0.7`** или новее) и скачай ассет
    **`Rvt_Docs_MCP-windows.exe`** (~93 МБ).
    Для macOS: `Rvt_Docs_MCP-macos-arm64` (Apple Silicon) или `Rvt_Docs_MCP-macos-x64` (Intel).
 3. Релиз собран GitHub Actions форка из того же кода, что и при ручной сборке, —
@@ -582,3 +582,4 @@ git ls-files "*.exe"                               # пусто
 | Инструкция проверена end-to-end | команды §3–§6 выполнены дословно в пустой тестовой папке: BOM = `123,10,32`, `git check-ignore` → `.gitignore:1:*.exe`, `git ls-files "*.exe"` → пусто, `opencode mcp list` → `✓ revit-api-docs connected` |
 | CI-артефакт релиза `v1.0.6` рабочий | скачанный `Rvt_Docs_MCP-windows.exe` (97 433 508 байт) проверен прямым MCP-stdio-клиентом: `initialize` → `revit-docs-mcp v1.0.0`, `tools/list` → `search-docs, retrieve-docs, retrieve-doc`, `search-docs "Wall"` → slug'и, `retrieve-doc` перегрузки `Wall.Create` → 2 425 симв. с Parameters / Exceptions / Return Value / C#-синтаксисом / Overloads |
 | Сборки различимы начиная с `v1.0.7` | `main.ts` → `McpServer({ name: "revit-docs-mcp", version: "1.0.7" })`. CI-артефакт `v1.0.6` в строке выше всё ещё отвечал `1.0.0` — именно поэтому версию надо поднимать перед каждым тегом |
+| CI-артефакт релиза `v1.0.7` рабочий | скачанный `Rvt_Docs_MCP-windows.exe` (97 441 696 байт) проверен прямым MCP-stdio-клиентом 08.09.2026: `initialize` → `revit-docs-mcp v1.0.7`, `tools/list` → `search-docs, retrieve-docs, retrieve-doc`, схема `retrieve-doc` → `["urlSlug","includeExamples"]` с `includeExamples` по умолчанию `false`, перегрузка `Wall.Create` → 2 425 симв. без флага (идентично `v1.0.6`) и 2 970 симв. с `includeExamples: true` |

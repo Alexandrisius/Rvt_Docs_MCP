@@ -66,7 +66,7 @@ npm install -g @opencode/cli        # optional: V2 beta (the opencode2 command)
 ### Option A — download the ready-made exe (fast, RECOMMENDED)
 
 1. Open **<https://github.com/Alexandrisius/Rvt_Docs_MCP/releases>**
-2. Take the latest release (**`v1.0.6`** or newer) and download the asset
+2. Take the latest release (**`v1.0.7`** or newer) and download the asset
    **`Rvt_Docs_MCP-windows.exe`** (~93 MB).
    For macOS: `Rvt_Docs_MCP-macos-arm64` (Apple Silicon) or `Rvt_Docs_MCP-macos-x64` (Intel).
 3. The release is built by the fork's GitHub Actions from the same code you would compile
@@ -584,3 +584,4 @@ git ls-files "*.exe"                               # empty
 | The guide was verified end-to-end | the §3–§6 commands were run verbatim in an empty test folder: BOM = `123,10,32`, `git check-ignore` → `.gitignore:1:*.exe`, `git ls-files "*.exe"` → empty, `opencode mcp list` → `✓ revit-api-docs connected` |
 | The CI artifact of release `v1.0.6` works | the downloaded `Rvt_Docs_MCP-windows.exe` (97,433,508 bytes) was checked with a direct MCP-stdio client: `initialize` → `revit-docs-mcp v1.0.0`, `tools/list` → `search-docs, retrieve-docs, retrieve-doc`, `search-docs "Wall"` → slugs, `retrieve-doc` for the `Wall.Create` overload → 2,425 chars with Parameters / Exceptions / Return Value / C# syntax / Overloads |
 | Builds are distinguishable since `v1.0.7` | `main.ts` → `McpServer({ name: "revit-docs-mcp", version: "1.0.7" })`. The `v1.0.6` artifact in the row above still reported `1.0.0`, which is exactly why the version has to be bumped before every tag |
+| The CI artifact of release `v1.0.7` works | the downloaded `Rvt_Docs_MCP-windows.exe` (97,441,696 bytes) was checked with a direct MCP-stdio client on 2026-09-08: `initialize` → `revit-docs-mcp v1.0.7`, `tools/list` → `search-docs, retrieve-docs, retrieve-doc`, `retrieve-doc` schema → `["urlSlug","includeExamples"]` with `includeExamples` default `false`, the `Wall.Create` overload → 2,425 chars without the flag (identical to `v1.0.6`) and 2,970 chars with `includeExamples: true` |

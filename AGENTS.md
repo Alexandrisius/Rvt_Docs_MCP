@@ -253,7 +253,9 @@ CI builds all three targets (~1–2 min) and creates the release. **Two gotchas:
    differ. Download the asset (`gh release download v1.0.8 --pattern
    "Rvt_Docs_MCP-windows.exe" --dir <tmp>`) and run the stdio smoke client above
    against it. For `v1.0.6` the CI artifact answered byte-identically to the local
-   build (`RETRIEVE len: 2425`).
+   build (`RETRIEVE len: 2425`). For `v1.0.7` the CI asset (97,441,696 bytes) and the
+   local build (97,441,859 bytes) differ in size but answered identically:
+   `revit-docs-mcp v1.0.7`, baseline `2425`, `includeExamples: true` → `2970`.
 
 ## 7. Failure modes and diagnostics
 
