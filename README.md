@@ -189,6 +189,14 @@ mentioned above its meaningless otherwise.
 
 ## Development & Contribution
 
+**Working on this repository with an AI agent (or by hand)? Read
+[`AGENTS.md`](AGENTS.md) first.** It describes what the project is and why this fork
+exists, the tool contract that downstream users depend on, the exact
+build / verify / release commands (there is no automated test suite — verification is
+a manual MCP stdio smoke test), the failure modes we have already lived through, and
+the invariants that must not be broken (for example: never push a `v*` tag unless you
+intend to publish a public release, and stdout belongs to JSON-RPC only).
+
 This project is open everything. Please contribute. Frankly I've never released
 code for others to use before so I don't really know how licensing and pull
 requests work so bear with me. Any help on anything is appreciated.
