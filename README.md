@@ -174,6 +174,12 @@ opencode after editing the config; already-running sessions do not pick up new
 servers. Keep the executable out of git (it is ~93 MB and GitHub blocks files over
 100 MB): add `*.exe` to `.gitignore` and commit only the config.
 
+For a detailed step-by-step walkthrough — prerequisites, getting the binary,
+config, `.gitignore`, verification, in-session smoke tests with expected output, a
+12-row troubleshooting table and a ready-to-paste `AGENTS.md` block that stops the
+agent from misusing the tools — see
+[`docs/INSTALL-opencode-ru.md`](docs/INSTALL-opencode-ru.md) (Russian).
+
 To enable search-library, you must first follow the steps described in
 [Rvt_Docs_Tbc_Embedder](https://github.com/kaitpw/Rvt_Docs_TBC_Embedder). After
 doing so, run the executable with the `-k` (OpenAI API key) and `-v` (OpenAI
